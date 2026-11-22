@@ -1,6 +1,6 @@
 # AUTQORA YouTube video to shorts worker
 
-This local service downloads an archived, public YouTube video that you own or are authorized to process, then uses FFmpeg to create up to ten evenly spaced, 9:16 MP4 clips. Each clip can be 15–20 seconds. Live-stream capture, subtitles, and scene detection are not included. The n8n workflow has separate YouTube and Instagram upload branches; both are opt-in, require provider credentials, and can create real posts when enabled.
+This local service downloads a completed, archived, public YouTube video that you own or are authorized to process, then uses FFmpeg to create up to ten evenly spaced, 9:16 MP4 clips. Each clip can be 15–20 seconds. Upcoming and active live stream URLs are rejected before download; use the completed replay after it becomes available. Live-stream capture, subtitles, and scene detection are not included. The n8n workflow has separate YouTube and Instagram upload branches; both are opt-in, require provider credentials, and can create real posts when enabled.
 
 ## Start it on Windows with Docker Desktop
 

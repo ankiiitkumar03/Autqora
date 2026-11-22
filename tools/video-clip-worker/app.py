@@ -22,6 +22,7 @@ CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 API_KEY = os.environ.get("CLIP_WORKER_API_KEY", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8090").rstrip("/")
 MAX_SOURCE_SECONDS = 4 * 60 * 60
+ACTIVE_LIVE_STATUSES = {"is_live", "is_upcoming", "post_live"}
 CLIP_RETENTION_SECONDS = int(os.environ.get("CLIP_RETENTION_SECONDS", str(7 * 24 * 60 * 60)))
 if not 60 * 60 <= CLIP_RETENTION_SECONDS <= 30 * 24 * 60 * 60:
     raise RuntimeError("CLIP_RETENTION_SECONDS must be between 3600 (1 hour) and 2592000 (30 days).")
@@ -119,12 +120,29 @@ def create_clip_job(payload: ClipRequest):
             }
             try:
                 with yt_dlp.YoutubeDL(options) as downloader:
+                    metadata = downloader.extract_info(source_url, download=False)
+                    if not isinstance(metadata, dict):
+                        raise HTTPException(status_code=422, detail="The source URL did not resolve to one archived video.")
+                    live_status = metadata.get("live_status")
+                    if metadata.get("is_live") is True or live_status in ACTIVE_LIVE_STATUSES:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="This URL is an upcoming or active live stream. The local worker only processes completed, archived videos; try the replay after it is available.",
+                        )
+                    duration = int(metadata.get("duration") or 0)
+                    if duration <= 0:
+                        raise HTTPException(status_code=422, detail="This archived video has no available duration metadata; live or unbounded sources are not supported.")
+                    if duration > MAX_SOURCE_SECONDS:
+                        raise HTTPException(status_code=413, detail="Source videos are limited to four hours.")
+                    if duration < payload.clipDurationSeconds:
+                        raise HTTPException(status_code=422, detail="The source video is shorter than the requested clip duration.")
                     info = downloader.extract_info(source_url, download=True)
                     downloaded = Path(downloader.prepare_filename(info))
                     if not downloaded.exists():
                         downloaded = downloaded.with_suffix(".mp4")
-                    duration = int(info.get("duration") or 0)
             except Exception as exc:
+                if isinstance(exc, HTTPException):
+                    raise
                 raise HTTPException(status_code=422, detail="Could not fetch this archived video. Confirm it is public, available, and yours or authorized for processing.") from exc
 
             if not downloaded.is_file():
@@ -132,16 +150,6 @@ def create_clip_job(payload: ClipRequest):
                 if not candidates:
                     raise HTTPException(status_code=422, detail="The video downloader did not produce a media file.")
                 downloaded = candidates[0]
-            if duration <= 0:
-                try:
-                    duration = int(float(run_command(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(downloaded)])))
-                except ValueError as exc:
-                    raise HTTPException(status_code=422, detail="Could not read the video duration.") from exc
-            if duration < payload.clipDurationSeconds:
-                raise HTTPException(status_code=422, detail="The source video is shorter than the requested clip duration.")
-            if duration > MAX_SOURCE_SECONDS:
-                raise HTTPException(status_code=413, detail="Source videos are limited to four hours.")
-
             latest_start = duration - payload.clipDurationSeconds
             starts = [round(latest_start * index / max(payload.clipCount - 1, 1)) for index in range(payload.clipCount)]
             for index, start in enumerate(starts, start=1):

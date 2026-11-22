@@ -1,6 +1,6 @@
 # AUTQORA YouTube video to shorts worker
 
-This local service processes an archived, public YouTube video that you own or are authorized to process. It creates up to ten evenly spaced vertical MP4 clips, each 15–20 seconds. It does not capture live streams. The n8n workflow has separate YouTube and Instagram upload branches; both are opt-in, require provider credentials, and can create real posts when enabled.
+This local service processes a completed, archived, public YouTube video that you own or are authorized to process. It creates up to ten evenly spaced vertical MP4 clips, each 15–20 seconds. Upcoming and active live stream URLs are rejected before download; use the completed replay after it becomes available. It does not capture live streams. The n8n workflow has separate YouTube and Instagram upload branches; both are opt-in, require provider credentials, and can create real posts when enabled.
 
 ## Start with Docker Desktop
 
