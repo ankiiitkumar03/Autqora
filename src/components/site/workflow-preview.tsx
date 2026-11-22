@@ -43,7 +43,7 @@ function getPreview(project: Project): { title: string; description: string; row
   if (scenario.isClipPublishingPipeline) {
     return {
       title: "Live stream → Shorts → social publishing",
-      description: "The project brief asks for the full pipeline. The current export can clip an archived video and optionally upload privately to YouTube or publish Instagram Reels; remaining stages stay visible below.",
+      description: "The project brief asks for the full pipeline. The current export can clip an archived video and optionally upload to YouTube with selectable visibility or publish Instagram Reels; remaining stages stay visible below.",
       rows: [
         {
           label: "Available in the current export",
@@ -52,7 +52,7 @@ function getPreview(project: Project): { title: string; description: string; row
             { title: "Archived YouTube video", detail: "Public URL you own or may process", state: "included" },
             { title: "FFmpeg clip worker", detail: "Creates portrait 15–20 second clips", state: "setup" },
             { title: "Local MP4 links", detail: "Review and download the generated clips", state: "included" },
-            { title: "YouTube upload", detail: "Optional; uploads privately after opt-in", state: "setup" },
+            { title: "YouTube upload", detail: "Optional; choose title, description and private/unlisted/public visibility", state: "setup" },
             { title: "Instagram Reels upload", detail: "Optional Meta resumable upload; opt-in publishes a real Reel", state: "setup" },
           ],
         },
@@ -62,7 +62,6 @@ function getPreview(project: Project): { title: string; description: string; row
             { title: "Live stream capture", detail: "Not supported by the current archived-video worker", state: "pending" },
             { title: "Moment selection and deduplication", detail: "Choose useful moments and avoid repeated clips", state: "pending" },
             { title: "In-workflow review gate", detail: "Approve clips before enabling either uploader", state: "pending" },
-            { title: "YouTube public visibility", detail: "Uploads remain private until reviewed in YouTube Studio", state: "pending" },
           ],
         },
       ],
@@ -71,13 +70,13 @@ function getPreview(project: Project): { title: string; description: string; row
   if (scenario.isYoutubeVideoClips) {
     return {
       title: "YouTube video → vertical clips",
-      description: "Current starter workflow stages. It uses an archived public video, returns local links, and can optionally upload clips privately to YouTube. It does not capture live streams.",
+      description: "Current starter workflow stages. It uses an archived public video, returns local links, and can optionally upload clips to YouTube with configurable title, description and visibility. It does not capture live streams.",
       rows: [{ label: "Current export", stages: [
         { title: "Manual run", detail: "Start from n8n", state: "included" },
         { title: "Set clip options", detail: "Video URL, count, and 15–20 second duration", state: "included" },
         { title: "FFmpeg clip worker", detail: "Local service; API credential required", state: "setup" },
         { title: "Local MP4 links", detail: "Review clips before sharing", state: "included" },
-        { title: "YouTube private upload", detail: "Optional; requires YouTube OAuth2", state: "setup" },
+        { title: "YouTube upload", detail: "Optional; choose private, unlisted or public; requires YouTube OAuth2", state: "setup" },
       ] }],
     };
   }

@@ -142,6 +142,23 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
       && typeof credential.name === "string" && credential.name.trim().length > 0,
     ));
   });
+  const isClipPublishingScenario = scenario === "youtube_video_clips" || scenario === "youtube_clip_publishing_pipeline";
+  const clipOptions = nodes.find((node) => node.name === "Set clip options");
+  const clipOptionsCode = clipOptions?.parameters && typeof clipOptions.parameters === "object"
+    ? (clipOptions.parameters as Record<string, unknown>).jsCode
+    : null;
+  const youtubeUpload = nodes.find((node) => typeof node.name === "string" && /upload youtube short/i.test(node.name));
+  const youtubeUploadOptions = youtubeUpload?.parameters && typeof youtubeUpload.parameters === "object"
+    ? (youtubeUpload.parameters as Record<string, unknown>).options
+    : null;
+  const clipPublishingControlsPass = !isClipPublishingScenario || (
+    typeof clipOptionsCode === "string"
+    && ["publishToYouTube", "publishToInstagram", "youtubeTitlePrefix", "youtubeDescription", "youtubePrivacyStatus"].every((field) => clipOptionsCode.includes(field))
+    && /privacyChoices\s*=\s*\[\s*["']private["']\s*,\s*["']unlisted["']\s*,\s*["']public["']\s*\]/.test(clipOptionsCode)
+    && Boolean(youtubeUploadOptions && typeof youtubeUploadOptions === "object"
+      && (youtubeUploadOptions as Record<string, unknown>).privacyStatus === "={{ $json.youtubePrivacyStatus }}"
+      && (youtubeUploadOptions as Record<string, unknown>).description === "={{ $json.youtubeDescription }}")
+  );
   const structuralPass = structureErrors.length === 0;
   const placeholdersPass = !hasPlaceholders;
   const scenarioPass = scenario === "imported_n8n" || scenario === "ai_generated_n8n"
@@ -160,7 +177,7 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
           ? names.some((name) => /start clip generation/i.test(name))
             && names.some((name) => /create vertical clips with ffmpeg/i.test(name))
             && names.some((name) => /return clip download links/i.test(name))
-            && names.some((name) => /upload youtube short as private/i.test(name))
+            && names.some((name) => /upload youtube short(?: as private)?/i.test(name))
             && names.some((name) => /create instagram reel upload session/i.test(name))
             && names.some((name) => /upload reel video bytes to meta/i.test(name))
             && names.some((name) => /publish instagram reel/i.test(name))
@@ -168,7 +185,7 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
         ? names.some((name) => /when clicking.*execute workflow/i.test(name)) && names.some((name) => /autqora implementation draft/i.test(name))
         : false;
   const status = structuralPass && placeholdersPass && webhookAuthConfigured && credentialConfigured
-    && scenarioPass ? "ready_for_manual_test" as const
+    && scenarioPass && clipPublishingControlsPass ? "ready_for_manual_test" as const
     : "needs_setup" as const;
   const checks = [
     {
@@ -200,12 +217,20 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
         : scenario === "google_sheets_lead_email"
           ? "Google Sheets row trigger, email validation, and Gmail notification nodes were found. Import and test the provider credentials in n8n before enabling it."
         : scenario === "youtube_video_clips"
-          ? "Manual run, clip-worker request, clip-link output, and optional private YouTube upload steps were found. YouTube uploads require explicit opt-in and OAuth; this does not capture live streams or publish to Instagram."
+          ? "Manual run, clip-worker request, clip-link output, and optional YouTube upload steps were found. Upload opt-in, title, description, and visibility are configurable; this does not capture live streams or publish to Instagram."
         : scenario === "youtube_clip_publishing_pipeline"
           ? "Archived-video clip generation and opt-in YouTube/Instagram upload steps were found. Provider credentials and user opt-in are required; live capture, meaningful-moment selection, and an in-workflow review gate are not included."
           : "Webhook intake and JSON response steps were found. This does not prove n8n import or a live request."
         : "No implemented scenario-specific workflow was detected; this export is a generic scaffold.",
     },
+    ...(isClipPublishingScenario ? [{
+      id: "publishing_controls",
+      label: "YouTube metadata and platform choices",
+      passed: clipPublishingControlsPass,
+      detail: clipPublishingControlsPass
+        ? "The clip options expose YouTube title, description, privacy (private/unlisted/public), and separate YouTube/Instagram opt-ins. This checks workflow configuration only; it does not verify provider behavior."
+        : "Regenerate this workflow to include editable YouTube title, description, privacy, and separate platform opt-in settings.",
+    }] : []),
     {
       id: "placeholders",
       label: "Required values configured",

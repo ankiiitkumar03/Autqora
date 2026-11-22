@@ -56,8 +56,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
     const validationErrors = validateN8nWorkflow(requestBody.workflow);
     if (validationErrors.length) return Response.json({ error: "Generated workflow did not pass validation.", details: validationErrors.slice(0, 8) }, { status: 400, headers });
     if (requestBody.scenario === "ai_generated_n8n" && hasUnsafeAiWorkflowContent(requestBody.workflow)) return Response.json({ error: "AI-generated workflows cannot contain code, shell, file-system, or remote-shell nodes and are limited to 25 nodes." }, { status: 400, headers });
-    const scenarioCheck = verifyN8nWorkflow(requestBody.workflow, requestBody.scenario).checks.find((check) => check.id === "scenario_nodes");
-    if (!scenarioCheck?.passed) return Response.json({ error: "The workflow does not match the selected generated scenario." }, { status: 400, headers });
+    const scenarioChecks = verifyN8nWorkflow(requestBody.workflow, requestBody.scenario).checks;
+    const scenarioCheck = scenarioChecks.find((check) => check.id === "scenario_nodes");
+    const publishingCheck = scenarioChecks.find((check) => check.id === "publishing_controls");
+    if (!scenarioCheck?.passed || publishingCheck && !publishingCheck.passed) return Response.json({ error: "The workflow does not match the selected generated scenario or is missing required publishing controls." }, { status: 400, headers });
     if (findInlineWorkflowSecrets(requestBody.workflow).length) return Response.json({ error: "Remove inline credentials before saving the workflow. Keep secrets in n8n credentials." }, { status: 400, headers });
     try {
       const name = (requestBody.workflow as { name: string }).name;
@@ -114,7 +116,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
         const workerName = "Create vertical clips with FFmpeg";
         const outputName = "Return clip download links";
         const instagramOptions = isClipPublishingPipeline
-          ? `, publishToInstagram: false, instagramUserId: "REPLACE_WITH_INSTAGRAM_PROFESSIONAL_ACCOUNT_ID", instagramCaption: "REPLACE_WITH_REEL_CAPTION"`
+          ? `, instagramUserId: "REPLACE_WITH_INSTAGRAM_PROFESSIONAL_ACCOUNT_ID", instagramCaption: "REPLACE_WITH_REEL_CAPTION"`
           : "";
         return {
           name: `AUTQORA YouTube video to shorts - ${project.name}`,
@@ -123,7 +125,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
             {
               parameters: {
                 mode: "runOnceForAllItems",
-                jsCode: `// Use a public archived video you own or are authorized to process. Live capture is not supported.\n// Uploads create real posts. Keep all opt-ins false until you have reviewed a prior clip run.\nreturn [{ json: { sourceUrl: "REPLACE_WITH_PUBLIC_YOUTUBE_VIDEO_URL", clipCount: 5, clipDurationSeconds: 18, publishToYouTube: false, youtubeTitlePrefix: "Short"${instagramOptions} } }];`,
+                jsCode: `// Use a public archived video you own or are authorized to process. Live capture is not supported.\n// Uploads create real posts. Keep all opt-ins false until you have reviewed a prior clip run.\n// Choose YouTube privacyStatus: private, unlisted, or public.\nreturn [{ json: { sourceUrl: "REPLACE_WITH_PUBLIC_YOUTUBE_VIDEO_URL", clipCount: 5, clipDurationSeconds: 18, publishToYouTube: false, publishToInstagram: false, youtubeTitlePrefix: "Short", youtubeDescription: "Short clip generated from an authorized source video by AUTQORA.", youtubePrivacyStatus: "private"${instagramOptions} } }];`,
               },
               id: randomUUID(), name: configName, type: "n8n-nodes-base.code", typeVersion: 2, position: [460, 300],
             },
@@ -145,7 +147,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
             {
               parameters: {
                 mode: "runOnceForAllItems",
-                jsCode: `const response = $input.first().json;\nif (!Array.isArray(response.clips) || response.clips.length === 0) throw new Error("Clip worker returned no clips.");\nconst options = $("Set clip options").first().json;\nreturn response.clips.map((clip) => ({ json: { fileName: clip.fileName, durationSeconds: clip.durationSeconds, downloadUrl: clip.downloadUrl, youtubeTitle: (options.youtubeTitlePrefix + " " + clip.fileName).slice(0, 100), publishToYouTube: options.publishToYouTube === true, publishToInstagram: options.publishToInstagram === true } }));`,
+                jsCode: `const response = $input.first().json;\nif (!Array.isArray(response.clips) || response.clips.length === 0) throw new Error("Clip worker returned no clips.");\nconst options = $("Set clip options").first().json;\nconst privacyChoices = ["private", "unlisted", "public"];\nif (!privacyChoices.includes(options.youtubePrivacyStatus)) throw new Error("Choose YouTube privacy: private, unlisted, or public.");\nconst titlePrefix = String(options.youtubeTitlePrefix ?? "").trim();\nif (!titlePrefix || /[<>]/.test(titlePrefix)) throw new Error("Set a YouTube title prefix without angle brackets.");\nconst description = String(options.youtubeDescription ?? "");\nif (/[<>]/.test(description)) throw new Error("YouTube descriptions cannot contain angle brackets.");\nif (new TextEncoder().encode(description).length > 5000) throw new Error("YouTube description must be 5000 bytes or fewer.");\nreturn response.clips.map((clip) => ({ json: { fileName: clip.fileName, durationSeconds: clip.durationSeconds, downloadUrl: clip.downloadUrl, youtubeTitle: (titlePrefix + " " + clip.fileName).slice(0, 100), youtubeDescription: description, youtubePrivacyStatus: options.youtubePrivacyStatus, publishToYouTube: options.publishToYouTube === true, publishToInstagram: options.publishToInstagram === true } }));`,
               },
               id: randomUUID(), name: outputName, type: "n8n-nodes-base.code", typeVersion: 2, position: [1020, 300],
             },
@@ -181,9 +183,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 operation: "upload",
                 title: "={{ $json.youtubeTitle }}",
                 binaryProperty: "data",
-                options: { description: "={{ 'Short clip generated from an authorized source video by AUTQORA. ' + $json.fileName }}", notifySubscribers: false, privacyStatus: "private" },
+                options: { description: "={{ $json.youtubeDescription }}", notifySubscribers: false, privacyStatus: "={{ $json.youtubePrivacyStatus }}" },
               },
-              id: randomUUID(), name: "Upload YouTube Short as private", type: "n8n-nodes-base.youTube", typeVersion: 1, position: [2180, 160],
+              id: randomUUID(), name: "Upload YouTube Short", type: "n8n-nodes-base.youTube", typeVersion: 1, position: [2180, 160],
               credentials: { youTubeOAuth2Api: { id: "REPLACE_WITH_YOUTUBE_CREDENTIAL_ID", name: "YouTube OAuth2" } },
             },
             ...(isClipPublishingPipeline ? [{
@@ -257,7 +259,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
               { node: "Only upload to YouTube when opted in", type: "main", index: 0 },
               ...(isClipPublishingPipeline ? [{ node: "Only upload to Instagram when opted in", type: "main", index: 0 }] : []),
             ]] },
-            "Only upload to YouTube when opted in": { main: [[{ node: "Upload YouTube Short as private", type: "main", index: 0 }]] },
+            "Only upload to YouTube when opted in": { main: [[{ node: "Upload YouTube Short", type: "main", index: 0 }]] },
             ...(isClipPublishingPipeline ? {
             "Only upload to Instagram when opted in": { main: [[
               { node: "Create Instagram Reel upload session", type: "main", index: 0 },
