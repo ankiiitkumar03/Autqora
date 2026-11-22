@@ -147,7 +147,7 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
   const scenarioPass = scenario === "imported_n8n" || scenario === "ai_generated_n8n"
     ? structuralPass
     : scenario === "instagram_photo_post"
-    ? names.some((name) => /instagram post details/i.test(name)) && names.some((name) => /media container/i.test(name)) && names.some((name) => /publish instagram/i.test(name))
+    ? names.some((name) => /instagram post details/i.test(name)) && names.some((name) => /(?:photo|media) container/i.test(name)) && names.some((name) => /publish instagram/i.test(name))
     : scenario === "webhook_intake"
       ? names.some((name) => /receive webhook request/i.test(name)) && names.some((name) => /return accepted response/i.test(name))
       : scenario === "webhook_api_forward"
