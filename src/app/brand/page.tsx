@@ -56,18 +56,18 @@ const palette = [
   },
   {
     name: "Violet",
-    hex: "#7C5CFF",
-    rgb: "124 92 255",
+    hex: "#7C3AED",
+    rgb: "124 58 237",
     role: "Brand signal",
-    className: "bg-[#7C5CFF] text-white",
+    className: "bg-[#7C3AED] text-white",
     muted: "text-white/60",
   },
   {
     name: "Violet Soft",
-    hex: "#A48CFF",
-    rgb: "164 140 255",
+    hex: "#C4B5FD",
+    rgb: "196 181 253",
     role: "Interactive & accent",
-    className: "bg-[#A48CFF] text-[#120a2e]",
+    className: "bg-[#C4B5FD] text-[#120a2e]",
     muted: "text-[#120a2e]/55",
   },
   {
@@ -846,7 +846,7 @@ export default function BrandPage() {
                   Download the system.
                 </h2>
                 <p className="mt-4 max-w-md text-[13px] leading-relaxed text-white/38">
-                  Source SVGs for the mark, mono mark, lockup and app icon. For
+                  Source SVGs for the mark, mono mark, dark and light lockups, and app icon. For
                   co-branding, press or partner use, contact{" "}
                   <a
                     href="mailto:brand@autqora.com"
@@ -861,6 +861,7 @@ export default function BrandPage() {
                     ["Mark", "/brand/autqora-mark.svg"],
                     ["Mono mark", "/brand/autqora-mark-mono.svg"],
                     ["Lockup", "/brand/autqora-lockup.svg"],
+                    ["Light lockup", "/brand/autqora-lockup-light.svg"],
                     ["App icon", "/brand/autqora-app-icon.svg"],
                   ].map(([label, href]) => (
                     <a
