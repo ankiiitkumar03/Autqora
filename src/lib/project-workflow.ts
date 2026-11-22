@@ -1,4 +1,4 @@
-type N8nNode = { id?: unknown; name?: unknown; type?: unknown; parameters?: unknown; position?: unknown };
+type N8nNode = { id?: unknown; name?: unknown; type?: unknown; typeVersion?: unknown; parameters?: unknown; position?: unknown };
 
 export type WorkflowDebugReview = { nodeCount: number; issues: string[]; securityNotes: string[] };
 
@@ -165,6 +165,8 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
     : null;
   const clipOutputName = "Return clip download links";
   const downloadGateName = "Only download clips when a platform is opted in";
+  const reviewName = "Review clips before publishing";
+  const approvalGateName = "Only publish approved clips";
   const downloadName = "Download clip for publishing";
   const youtubeGateName = "Only upload to YouTube when opted in";
   const instagramGateName = "Only upload to Instagram when opted in";
@@ -188,6 +190,50 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
   const youtubeUploadOptions = youtubeUpload?.parameters && typeof youtubeUpload.parameters === "object"
     ? (youtubeUpload.parameters as Record<string, unknown>).options
     : null;
+  const reviewNode = nodes.find((node) => node.name === reviewName);
+  const reviewParameters = reviewNode?.parameters && typeof reviewNode.parameters === "object"
+    ? reviewNode.parameters as Record<string, unknown>
+    : null;
+  const reviewFields = reviewParameters?.formFields && typeof reviewParameters.formFields === "object"
+    ? (reviewParameters.formFields as { values?: unknown }).values
+    : null;
+  const decisionField = Array.isArray(reviewFields)
+    ? reviewFields.find((field) => field && typeof field === "object" && (field as Record<string, unknown>).fieldLabel === "Publishing decision") as Record<string, unknown> | undefined
+    : undefined;
+  const decisionChoices = decisionField?.fieldOptions && typeof decisionField.fieldOptions === "object"
+    ? (decisionField.fieldOptions as { values?: unknown }).values
+    : null;
+  const decisionChoiceLabels = Array.isArray(decisionChoices)
+    ? decisionChoices.map((choice) => choice && typeof choice === "object" ? (choice as Record<string, unknown>).option : null)
+    : [];
+  const approvalNode = nodes.find((node) => node.name === approvalGateName);
+  const approvalCode = approvalNode?.parameters && typeof approvalNode.parameters === "object"
+    ? (approvalNode.parameters as Record<string, unknown>).jsCode
+    : null;
+  const reviewFormPass = !isClipPublishingScenario || (
+    reviewNode?.type === "n8n-nodes-base.wait"
+    && reviewNode.typeVersion === 1.2
+    && reviewParameters?.resume === "form"
+    && reviewParameters.responseMode === "onReceived"
+    && reviewParameters.limitWaitTime === true
+    && reviewParameters.limitType === "afterTimeInterval"
+    && reviewParameters.resumeAmount === 24
+    && reviewParameters.resumeUnit === "hours"
+    && decisionField?.fieldType === "dropdown"
+    && decisionField.requiredField === true
+    && decisionChoiceLabels.includes("Approve all clips")
+    && decisionChoiceLabels.includes("Reject all clips")
+    && typeof reviewParameters.formDescription === "string"
+    && String(reviewParameters.formDescription).includes("downloadUrl")
+    && String(reviewParameters.formDescription).includes("startSeconds")
+    && approvalNode?.type === "n8n-nodes-base.code"
+    && typeof approvalCode === "string"
+    && approvalCode.includes('["Publishing decision"]')
+    && approvalCode.includes('decision !== "Approve all clips"')
+    && approvalCode.includes(`$("${downloadGateName}").all()`)
+    && approvalCode.includes("publishToYouTube === true")
+    && approvalCode.includes("publishToInstagram === true")
+  );
   const clipPublishingControlsPass = !isClipPublishingScenario || (
     typeof clipOptionsCode === "string"
     && ["publishToYouTube", "publishToInstagram", "youtubeTitlePrefix", "youtubeDescription", "youtubePrivacyStatus"].every((field) => clipOptionsCode.includes(field))
@@ -198,9 +244,12 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
     && nodes.some((node) => node.name === downloadGateName && node.type === "n8n-nodes-base.code" && typeof (node.parameters as Record<string, unknown> | undefined)?.jsCode === "string" && /publishToYouTube\s*===\s*true/.test(String((node.parameters as Record<string, unknown>).jsCode)) && /publishToInstagram\s*===\s*true/.test(String((node.parameters as Record<string, unknown>).jsCode)))
     && nodes.some((node) => node.name === youtubeGateName && node.type === "n8n-nodes-base.code" && /publishToYouTube\s*===\s*true/.test(String((node.parameters as Record<string, unknown> | undefined)?.jsCode)))
     && hasConnection(clipOutputName, downloadGateName)
-    && hasConnection(downloadGateName, downloadName)
+    && hasConnection(downloadGateName, reviewName)
+    && hasConnection(reviewName, approvalGateName)
+    && hasConnection(approvalGateName, downloadName)
     && hasConnection(downloadName, youtubeGateName)
     && hasConnection(youtubeGateName, String(youtubeUpload?.name ?? ""))
+    && reviewFormPass
     && (scenario !== "youtube_clip_publishing_pipeline" || (
       nodes.some((node) => node.name === instagramGateName && node.type === "n8n-nodes-base.code" && /publishToInstagram\s*===\s*true/.test(String((node.parameters as Record<string, unknown> | undefined)?.jsCode)))
       && hasConnection(downloadName, instagramGateName)
@@ -270,9 +319,9 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
         : scenario === "google_sheets_lead_email"
           ? "Google Sheets row trigger, email validation, and Gmail notification nodes were found. Import and test the provider credentials in n8n before enabling it."
         : scenario === "youtube_video_clips"
-          ? "Manual run, clip-worker request, clip-link output, and optional YouTube upload steps were found. Upload opt-in, title, description, and visibility are configurable; this does not capture live streams or publish to Instagram."
+          ? "Manual run, clip-worker request, clip-link output, and optional YouTube upload steps were found. Opted-in uploads pass through a same-run batch review form; upload opt-in, title, description, and visibility are configurable. This does not capture live streams or publish to Instagram."
         : scenario === "youtube_clip_publishing_pipeline"
-          ? "Archived-video clip generation and opt-in YouTube/Instagram upload steps were found. Provider credentials and user opt-in are required; live capture, meaningful-moment selection, and an in-workflow review gate are not included."
+          ? "Archived-video clip generation, same-run batch approval, and opt-in YouTube/Instagram upload steps were found. Provider credentials and user opt-in are required; live capture, meaningful-moment selection, and individual per-clip approval are not included."
           : "Webhook intake and JSON response steps were found. This does not prove n8n import or a live request."
         : "No implemented scenario-specific workflow was detected; this export is a generic scaffold.",
     },
@@ -288,8 +337,19 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
       label: "YouTube metadata and platform choices",
       passed: clipPublishingControlsPass,
       detail: clipPublishingControlsPass
-        ? "The clip options expose YouTube metadata and privacy, and publishing nodes are connected behind their matching platform opt-in filters. This checks workflow structure only; it does not verify provider behavior or execution."
-        : "The workflow is missing clip publishing settings or a required opt-in-gated publishing connection. Regenerate the workflow and review its platform branches.",
+        ? "The clip options expose YouTube metadata and privacy; opted-in clips pause at a batch review form before download, rejection or timeout publishes nothing, and each publisher remains behind its platform opt-in filter. This checks workflow structure only; it does not verify provider behavior or execution."
+        : "The workflow is missing clip publishing settings, a fail-closed review form, or a required opt-in-gated publishing connection. Regenerate the workflow and review its platform branches.",
+    }, {
+      id: "clip_review_gate",
+      label: "Same-run clip review and approval gate",
+      passed: reviewFormPass && (!isClipPublishingScenario || (
+        hasConnection(downloadGateName, reviewName)
+        && hasConnection(reviewName, approvalGateName)
+        && hasConnection(approvalGateName, downloadName)
+      )),
+      detail: reviewFormPass
+        ? "The required form lists the opted-in clips and start times from the current run; only an explicit batch approval restores those exact items for upload. A rejection or 24-hour timeout fails closed. Individual per-clip approval is not provided."
+        : "The workflow must pause for a required batch decision, show the current run's clip links and start times, and restore clips only after an explicit approval.",
     }] : []),
     {
       id: "placeholders",

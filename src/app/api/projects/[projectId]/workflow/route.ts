@@ -59,7 +59,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
     const scenarioChecks = verifyN8nWorkflow(requestBody.workflow, requestBody.scenario).checks;
     const scenarioCheck = scenarioChecks.find((check) => check.id === "scenario_nodes");
     const publishingCheck = scenarioChecks.find((check) => check.id === "publishing_controls");
-    if (!scenarioCheck?.passed || publishingCheck && !publishingCheck.passed) return Response.json({ error: "The workflow does not match the selected generated scenario or is missing required publishing controls." }, { status: 400, headers });
+    const reviewGateCheck = scenarioChecks.find((check) => check.id === "clip_review_gate");
+    if (!scenarioCheck?.passed || publishingCheck && !publishingCheck.passed || reviewGateCheck && !reviewGateCheck.passed) return Response.json({ error: "The workflow does not match the selected generated scenario or is missing required publishing controls." }, { status: 400, headers });
     if (findInlineWorkflowSecrets(requestBody.workflow).length) return Response.json({ error: "Remove inline credentials before saving the workflow. Keep secrets in n8n credentials." }, { status: 400, headers });
     try {
       const name = (requestBody.workflow as { name: string }).name;
@@ -115,6 +116,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
         const configName = "Set clip options";
         const workerName = "Create vertical clips with FFmpeg";
         const outputName = "Return clip download links";
+        const downloadGateName = "Only download clips when a platform is opted in";
+        const reviewName = "Review clips before publishing";
+        const approvalGateName = "Only publish approved clips";
+        const downloadName = "Download clip for publishing";
         const instagramOptions = isClipPublishingPipeline
           ? `, instagramUserId: "REPLACE_WITH_INSTAGRAM_PROFESSIONAL_ACCOUNT_ID", instagramCaption: "REPLACE_WITH_REEL_CAPTION"`
           : "";
@@ -125,7 +130,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
             {
               parameters: {
                 mode: "runOnceForAllItems",
-                jsCode: `// Use a public archived video you own or are authorized to process. Live capture is not supported.\n// Choose evenly_spaced, scene_change (visual cuts only), or manual_timestamps.\n// For manual_timestamps, set one ascending, non-overlapping start in seconds per clip in clipStartsSeconds.\n// Uploads create real posts. Keep all opt-ins false until you have reviewed a prior clip run.\n// Choose YouTube privacyStatus: private, unlisted, or public.\nreturn [{ json: { sourceUrl: "REPLACE_WITH_PUBLIC_YOUTUBE_VIDEO_URL", clipCount: 5, clipDurationSeconds: 18, selectionMode: "evenly_spaced", clipStartsSeconds: [], publishToYouTube: false, publishToInstagram: false, youtubeTitlePrefix: "Short", youtubeDescription: "Short clip generated from an authorized source video by AUTQORA.", youtubePrivacyStatus: "private"${instagramOptions} } }];`,
+                jsCode: `// Use a public archived video you own or are authorized to process. Live capture is not supported.\n// Choose evenly_spaced, scene_change (visual cuts only), or manual_timestamps.\n// For manual_timestamps, set one ascending, non-overlapping start in seconds per clip in clipStartsSeconds.\n// Keep both publish opt-ins false for the first worker-only check. When enabled, this run pauses for batch review before uploading.\n// Choose YouTube privacyStatus: private, unlisted, or public.\nreturn [{ json: { sourceUrl: "REPLACE_WITH_PUBLIC_YOUTUBE_VIDEO_URL", clipCount: 5, clipDurationSeconds: 18, selectionMode: "evenly_spaced", clipStartsSeconds: [], publishToYouTube: false, publishToInstagram: false, youtubeTitlePrefix: "Short", youtubeDescription: "Short clip generated from an authorized source video by AUTQORA.", youtubePrivacyStatus: "private"${instagramOptions} } }];`,
               },
               id: randomUUID(), name: configName, type: "n8n-nodes-base.code", typeVersion: 2, position: [460, 300],
             },
@@ -156,7 +161,39 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 mode: "runOnceForAllItems",
                 jsCode: `return $input.all().filter((item) => item.json.publishToYouTube === true || item.json.publishToInstagram === true);`,
               },
-              id: randomUUID(), name: "Only download clips when a platform is opted in", type: "n8n-nodes-base.code", typeVersion: 2, position: [1220, 300],
+              id: randomUUID(), name: downloadGateName, type: "n8n-nodes-base.code", typeVersion: 2, position: [1220, 300],
+            },
+            {
+              parameters: {
+                resume: "form",
+                formTitle: "Review clips before publishing",
+                formDescription: `={{ "Review every clip from this run before any upload. Open each clip, then approve or reject the whole batch. A rejection or 24-hour timeout stops publishing.<ol>" + $("${downloadGateName}").all().map((item, index) => { const rawUrl = String(item.json.downloadUrl ?? ""); const safeUrl = /^https?:\\/\\//i.test(rawUrl) ? rawUrl.replaceAll("&", "&amp;").replaceAll("\\\"", "&quot;").replaceAll("<", "&lt;") : ""; const start = Number(item.json.startSeconds); return "<li>" + (safeUrl ? "<a href=\\\"" + safeUrl + "\\\">Open clip " + (index + 1) + "</a>" : "Clip " + (index + 1) + " link unavailable") + (Number.isFinite(start) ? " · starts at " + start + " seconds" : "") + "</li>"; }).join("") + "</ol>" }}`,
+                formFields: {
+                  values: [{
+                    fieldLabel: "Publishing decision",
+                    fieldType: "dropdown",
+                    fieldOptions: { values: [{ option: "Approve all clips" }, { option: "Reject all clips" }] },
+                    requiredField: true,
+                  }],
+                },
+                responseMode: "onReceived",
+                limitWaitTime: true,
+                limitType: "afterTimeInterval",
+                resumeAmount: 24,
+                resumeUnit: "hours",
+                options: {
+                  respondWithOptions: { values: { respondWith: "text", formSubmittedText: "Your decision was recorded. You can close this page." } },
+                  appendAttribution: false,
+                },
+              },
+              id: randomUUID(), name: reviewName, type: "n8n-nodes-base.wait", typeVersion: 1.2, position: [1460, 300],
+            },
+            {
+              parameters: {
+                mode: "runOnceForAllItems",
+                jsCode: `const decision = $input.first()?.json?.["Publishing decision"];\nif (decision !== "Approve all clips") return [];\n// The Wait form emits its submitted fields, so restore the exact opted-in clips from this execution.\nreturn $("${downloadGateName}").all().filter((item) => item.json.publishToYouTube === true || item.json.publishToInstagram === true);`,
+              },
+              id: randomUUID(), name: approvalGateName, type: "n8n-nodes-base.code", typeVersion: 2, position: [1700, 300],
             },
             {
               parameters: {
@@ -164,18 +201,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 url: "={{ $json.downloadUrl.replace('localhost', 'host.docker.internal').replace('127.0.0.1', 'host.docker.internal') }}",
                 options: { response: { response: { responseFormat: "file", outputPropertyName: "data" } } },
               },
-              id: randomUUID(), name: "Download clip for publishing", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [1460, 300],
+              id: randomUUID(), name: downloadName, type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [1940, 300],
             },
             {
               parameters: {
                 mode: "runOnceForAllItems",
                 jsCode: `return $input.all().filter((item) => item.json.publishToYouTube === true);`,
               },
-              id: randomUUID(), name: "Only upload to YouTube when opted in", type: "n8n-nodes-base.code", typeVersion: 2, position: [1700, 160],
+              id: randomUUID(), name: "Only upload to YouTube when opted in", type: "n8n-nodes-base.code", typeVersion: 2, position: [2180, 160],
             },
             ...(isClipPublishingPipeline ? [{
               parameters: { mode: "runOnceForAllItems", jsCode: `return $input.all().filter((item) => item.json.publishToInstagram === true);` },
-              id: randomUUID(), name: "Only upload to Instagram when opted in", type: "n8n-nodes-base.code", typeVersion: 2, position: [1700, 500],
+              id: randomUUID(), name: "Only upload to Instagram when opted in", type: "n8n-nodes-base.code", typeVersion: 2, position: [2180, 500],
             }] : []),
             {
               parameters: {
@@ -185,7 +222,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 binaryProperty: "data",
                 options: { description: "={{ $json.youtubeDescription }}", notifySubscribers: false, privacyStatus: "={{ $json.youtubePrivacyStatus }}" },
               },
-              id: randomUUID(), name: "Upload YouTube Short", type: "n8n-nodes-base.youTube", typeVersion: 1, position: [2180, 160],
+              id: randomUUID(), name: "Upload YouTube Short", type: "n8n-nodes-base.youTube", typeVersion: 1, position: [2520, 160],
               credentials: { youTubeOAuth2Api: { id: "REPLACE_WITH_YOUTUBE_CREDENTIAL_ID", name: "YouTube OAuth2" } },
             },
             ...(isClipPublishingPipeline ? [{
@@ -202,19 +239,19 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 ] },
                 options: {},
               },
-              id: randomUUID(), name: "Create Instagram Reel upload session", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [1940, 500],
+              id: randomUUID(), name: "Create Instagram Reel upload session", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [2520, 500],
               credentials: { httpHeaderAuth: { id: "REPLACE_WITH_META_BEARER_CREDENTIAL_ID", name: "AUTQORA Meta Graph Bearer" } },
             },
             {
               parameters: { mode: "combine", combineBy: "combineByPosition", options: {} },
-              id: randomUUID(), name: "Pair Reel session with clip file", type: "n8n-nodes-base.merge", typeVersion: 3.2, position: [2180, 500],
+              id: randomUUID(), name: "Pair Reel session with clip file", type: "n8n-nodes-base.merge", typeVersion: 3.2, position: [2760, 500],
             },
             {
               parameters: {
                 mode: "runOnceForAllItems",
                 jsCode: `const items = $input.all();\nfor (let index = 0; index < items.length; index++) {\n  const buffer = await this.helpers.getBinaryDataBuffer(index, "data");\n  items[index].json.fileSizeBytes = buffer.length;\n}\nreturn items;`,
               },
-              id: randomUUID(), name: "Measure Reel upload bytes", type: "n8n-nodes-base.code", typeVersion: 2, position: [2420, 500],
+              id: randomUUID(), name: "Measure Reel upload bytes", type: "n8n-nodes-base.code", typeVersion: 2, position: [3000, 500],
             },
             {
               parameters: {
@@ -232,7 +269,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 inputDataFieldName: "data",
                 options: {},
               },
-              id: randomUUID(), name: "Upload Reel video bytes to Meta", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [2660, 500],
+              id: randomUUID(), name: "Upload Reel video bytes to Meta", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [3240, 500],
               credentials: { httpHeaderAuth: { id: "REPLACE_WITH_META_OAUTH_UPLOAD_CREDENTIAL_ID", name: "AUTQORA Meta Resumable Upload" } },
             },
             {
@@ -245,7 +282,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 queryParameters: { parameters: [{ name: "creation_id", value: "={{ $('Pair Reel session with clip file').item.json.id }}" }] },
                 options: {},
               },
-              id: randomUUID(), name: "Publish Instagram Reel", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [2900, 500],
+              id: randomUUID(), name: "Publish Instagram Reel", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [3480, 500],
               credentials: { httpHeaderAuth: { id: "REPLACE_WITH_META_BEARER_CREDENTIAL_ID", name: "AUTQORA Meta Graph Bearer" } },
             }] : []),
           ],
@@ -254,7 +291,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
             [configName]: { main: [[{ node: workerName, type: "main", index: 0 }]] },
             [workerName]: { main: [[{ node: outputName, type: "main", index: 0 }]] },
             [outputName]: { main: [[{ node: "Only download clips when a platform is opted in", type: "main", index: 0 }]] },
-            "Only download clips when a platform is opted in": { main: [[{ node: "Download clip for publishing", type: "main", index: 0 }]] },
+            [downloadGateName]: { main: [[{ node: reviewName, type: "main", index: 0 }]] },
+            [reviewName]: { main: [[{ node: approvalGateName, type: "main", index: 0 }]] },
+            [approvalGateName]: { main: [[{ node: downloadName, type: "main", index: 0 }]] },
             "Download clip for publishing": { main: [[
               { node: "Only upload to YouTube when opted in", type: "main", index: 0 },
               ...(isClipPublishingPipeline ? [{ node: "Only upload to Instagram when opted in", type: "main", index: 0 }] : []),
