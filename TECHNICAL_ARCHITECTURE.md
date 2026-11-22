@@ -14,6 +14,7 @@ Browser
   ├─ /api/projects/[id]/mapping-preview (bounded, no-store synthetic payload preview; no persistence or outbound call)
   ├─ /api/projects/[id]/webhook-secret (one-time generated secret → SHA-256 hash and safe status metadata in SQLite)
   ├─ /api/projects/[id]/workflow (read-only workflow generation plus explicit validated artifact save/import: Instagram, authenticated webhook/API, Sheets → Gmail, archived-video → local clips with optional private YouTube upload)
+  ├─ /api/projects/[id]/workflow/ai (explicit, rate-limited OpenAI n8n draft; redacted inputs, local structural/security checks, unsaved response until user confirms)
   ├─ /api/projects/[id]/verification (local JSON checks, user-reported manual evidence, and bounded user-supplied n8n execution summary import)
   ├─ /api/projects/[id]/activity (owner-scoped, read-only timeline assembled from saved project records; explicitly not an audit log)
   ├─ /api/projects/[id]/export (owner-scoped, bounded JSON project backup; secret values and hashes excluded)

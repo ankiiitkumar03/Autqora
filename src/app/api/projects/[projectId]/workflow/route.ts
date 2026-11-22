@@ -4,6 +4,7 @@ import { getProject, getProjectPlan, getProjectWebhookSecretStatus, getProjectWo
 import { isSameOriginMutation } from "@/lib/request-security";
 import { findInlineWorkflowSecrets, validateN8nWorkflow, verifyN8nWorkflow } from "@/lib/project-workflow";
 import { getProjectScenario } from "@/lib/project-scenario";
+import { hasUnsafeAiWorkflowContent } from "@/lib/ai-workflow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,7 +39,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   if (exceedsJsonDepth(workflow)) return Response.json({ error: "Workflow JSON is nested too deeply to import." }, { status: 400, headers });
   if (workflow && typeof workflow === "object" && !Array.isArray(workflow) && (workflow as { action?: unknown }).action === "save_generated") {
     const requestBody = workflow as { scenario?: unknown; workflow?: unknown; sourceFingerprint?: unknown };
-    const scenarios = ["instagram_photo_post", "webhook_api_forward", "webhook_intake", "google_sheets_lead_email", "youtube_video_clips", "youtube_clip_publishing_pipeline", "generic_scaffold"];
+    const scenarios = ["instagram_photo_post", "webhook_api_forward", "webhook_intake", "google_sheets_lead_email", "youtube_video_clips", "youtube_clip_publishing_pipeline", "generic_scaffold", "ai_generated_n8n"];
     if (typeof requestBody.scenario !== "string" || !scenarios.includes(requestBody.scenario)) {
       return Response.json({ error: "Choose a supported generated workflow scenario." }, { status: 400, headers });
     }
@@ -54,6 +55,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
     }
     const validationErrors = validateN8nWorkflow(requestBody.workflow);
     if (validationErrors.length) return Response.json({ error: "Generated workflow did not pass validation.", details: validationErrors.slice(0, 8) }, { status: 400, headers });
+    if (requestBody.scenario === "ai_generated_n8n" && hasUnsafeAiWorkflowContent(requestBody.workflow)) return Response.json({ error: "AI-generated workflows cannot contain code, shell, file-system, or remote-shell nodes and are limited to 25 nodes." }, { status: 400, headers });
     const scenarioCheck = verifyN8nWorkflow(requestBody.workflow, requestBody.scenario).checks.find((check) => check.id === "scenario_nodes");
     if (!scenarioCheck?.passed) return Response.json({ error: "The workflow does not match the selected generated scenario." }, { status: 400, headers });
     if (findInlineWorkflowSecrets(requestBody.workflow).length) return Response.json({ error: "Remove inline credentials before saving the workflow. Keep secrets in n8n credentials." }, { status: 400, headers });

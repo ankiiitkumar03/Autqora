@@ -144,7 +144,7 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
   });
   const structuralPass = structureErrors.length === 0;
   const placeholdersPass = !hasPlaceholders;
-  const scenarioPass = scenario === "imported_n8n"
+  const scenarioPass = scenario === "imported_n8n" || scenario === "ai_generated_n8n"
     ? structuralPass
     : scenario === "instagram_photo_post"
     ? names.some((name) => /instagram post details/i.test(name)) && names.some((name) => /media container/i.test(name)) && names.some((name) => /publish instagram/i.test(name))
@@ -187,7 +187,9 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
       id: "scenario_nodes",
       label: scenario === "imported_n8n" ? "Imported workflow structure" : "Scenario-specific nodes",
       passed: scenarioPass,
-      detail: scenarioPass ? scenario === "instagram_photo_post"
+      detail: scenarioPass ? scenario === "ai_generated_n8n"
+        ? "AI-generated n8n draft passed structural checks. Review every node and credential in n8n; this does not prove provider behavior or execution."
+        : scenario === "instagram_photo_post"
         ? "Instagram photo-post steps were found. This does not prove n8n import or Meta API compatibility."
         : scenario === "imported_n8n"
           ? "Imported n8n structure passed local checks. This does not prove provider behavior, credentials, or execution."

@@ -4,6 +4,8 @@ This roadmap preserves the full AUTQORA vision. Debugging remains one capability
 
 The project page also presents a consolidated timeline assembled from saved milestones. It is a review aid, not an immutable audit log; project-field changes are not individually versioned.
 
+Generic projects can now request an optional AI-generated inactive n8n draft. The candidate is checked locally and stays unsaved until the user confirms it. Provider quality, instance-specific node compatibility, credentials, and execution remain unverified; treat this as a draft generator, not a live integration.
+
 ## Current state and next milestone: Brief → plan → workflow artifact
 
 The brief → plan → recommendation → setup/debug → export/verification/runbook foundation now exists with a local account/session layer and scenario-specific starter exports for Instagram photos, authenticated webhook/API, Google Sheets → Gmail lead notification, and archived YouTube video → local short clips. The user’s original **clipper** brief asks for live-stream clipping plus automatic Instagram and YouTube publishing. Its export now includes opt-in private YouTube uploads and Meta's Instagram Reels resumable upload path; both require provider credentials and default off. Live capture, moment selection and an in-workflow review gate remain missing. The FastAPI/FFmpeg worker container was built and confirmed healthy/reachable in a previous session; this turn's sandbox could not inspect Docker or localhost, so current process state is unknown. No authorized video has been processed and the generated workflow has not been imported or executed in the user's n8n. The next milestone is to import-test the worker and both publisher paths, then continue the remaining pipeline in verifiable stages.

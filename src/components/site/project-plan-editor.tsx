@@ -18,6 +18,8 @@ type WebhookSecretStatus = { configured: boolean; headerName: string; credential
 type WebhookSecretResponse = { status?: WebhookSecretStatus; secret?: string; error?: string };
 type PlanVersionsResponse = { versions?: ProjectPlan[]; error?: string };
 type VerificationResponse = { reports?: WorkflowVerification[]; report?: WorkflowVerification; manualEvidence?: ManualWorkflowTestEvidence[]; executionEvidence?: N8nExecutionEvidence[]; error?: string };
+type AiWorkflowDraft = { workflow: Record<string, unknown>; assumptions: string[]; limitations: string[]; note: string; scenario: string; sourceFingerprint: string };
+type AiWorkflowDraftResponse = AiWorkflowDraft & { error?: string };
 type EditorFields = Omit<ProjectPlanInput, "implementationSteps" | "verificationChecks"> & {
   implementationSteps: string;
   verificationChecks: string;
@@ -85,6 +87,11 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
   const [regenerating, setRegenerating] = useState(false);
   const [aiPlanning, setAiPlanning] = useState(false);
   const [aiPlanError, setAiPlanError] = useState("");
+  const [aiWorkflowDrafting, setAiWorkflowDrafting] = useState(false);
+  const [aiWorkflowSaving, setAiWorkflowSaving] = useState(false);
+  const [aiWorkflowDraft, setAiWorkflowDraft] = useState<AiWorkflowDraft | null>(null);
+  const [aiWorkflowError, setAiWorkflowError] = useState("");
+  const [aiWorkflowMessage, setAiWorkflowMessage] = useState("");
   const [planVersions, setPlanVersions] = useState<ProjectPlan[]>([]);
   const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
 
@@ -230,6 +237,66 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
       setDownloadError(workflowError instanceof Error ? workflowError.message : "Could not generate this workflow.");
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function draftAiWorkflow() {
+    setAiWorkflowDrafting(true);
+    setAiWorkflowError("");
+    setAiWorkflowMessage("");
+    setAiWorkflowDraft(null);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/workflow/ai`, { method: "POST" });
+      const result = (await response.json()) as AiWorkflowDraftResponse;
+      if (!response.ok || !result.workflow || !result.sourceFingerprint) throw new Error(result.error ?? "Could not draft an AI workflow.");
+      setAiWorkflowDraft(result);
+    } catch (draftError) {
+      setAiWorkflowError(draftError instanceof Error ? draftError.message : "Could not draft an AI workflow.");
+    } finally {
+      setAiWorkflowDrafting(false);
+    }
+  }
+
+  function downloadAiWorkflowDraft() {
+    if (!aiWorkflowDraft) return;
+    const blob = new Blob([JSON.stringify(aiWorkflowDraft.workflow, null, 2)], { type: "application/json;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    const safeProjectName = project?.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "project";
+    anchor.download = `autqora-ai-workflow-${safeProjectName}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+  }
+
+  async function saveAiWorkflowDraft() {
+    if (!aiWorkflowDraft) return;
+    setAiWorkflowSaving(true);
+    setAiWorkflowError("");
+    setAiWorkflowMessage("");
+    try {
+      const response = await fetch(`/api/projects/${projectId}/workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save_generated", scenario: aiWorkflowDraft.scenario, sourceFingerprint: aiWorkflowDraft.sourceFingerprint, workflow: aiWorkflowDraft.workflow }),
+      });
+      const result = (await response.json()) as { artifact?: WorkflowArtifact; error?: string };
+      if (!response.ok || !result.artifact) throw new Error(result.error ?? "Could not save the AI workflow draft.");
+      const historyResponse = await fetch(`/api/projects/${projectId}/workflow/versions`, { cache: "no-store" });
+      const history = (await historyResponse.json()) as VersionsResponse;
+      if (historyResponse.ok && history.versions) {
+        setWorkflowVersions(history.versions);
+        setExecutionArtifactId(history.versions[0]?.id ?? "");
+      }
+      await refreshSetupChecks();
+      setAiWorkflowDraft(null);
+      setAiWorkflowMessage(`Saved as workflow version ${result.artifact.version}. It remains inactive and still needs review in n8n.`);
+    } catch (saveError) {
+      setAiWorkflowError(saveError instanceof Error ? saveError.message : "Could not save the AI workflow draft.");
+    } finally {
+      setAiWorkflowSaving(false);
     }
   }
 
@@ -473,7 +540,11 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
   const inputClass = "mt-2 w-full rounded-lg border border-white/[0.12] bg-[#100d17] px-3 py-3 text-sm leading-relaxed text-white/85 outline-none placeholder:text-white/35 focus-visible:border-violet-soft/70 focus-visible:ring-2 focus-visible:ring-violet/30";
   const labelClass = "block text-sm font-medium text-white/80";
   const { isInstagramPost, isWebhookIntake, isWebhookForward, isGoogleSheetsLeadEmail, isYoutubeVideoClips, isClipPublishingPipeline } = getProjectScenario(project);
+  const projectWorkflowKind = getProjectScenario(project).workflowKind;
   const currentVerificationReport = verificationReports.find((report) => report.artifactId === workflowVersions[0]?.id);
+  const aiDraftNodes = aiWorkflowDraft && Array.isArray(aiWorkflowDraft.workflow.nodes)
+    ? aiWorkflowDraft.workflow.nodes.filter((node): node is { name: string; type: string } => Boolean(node && typeof node === "object" && typeof (node as { name?: unknown }).name === "string" && typeof (node as { type?: unknown }).type === "string"))
+    : [];
 
   return (
     <div className="mx-auto max-w-[900px] px-5 pb-24 sm:px-8">
@@ -492,11 +563,26 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
           <a href={`/api/projects/${projectId}/runbook`} className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-white/[0.16] px-4 text-sm text-white/80 hover:bg-white/[0.06]"><FileDown className="h-4 w-4" /> Deployment runbook</a>
           <a href={`/api/projects/${projectId}/export`} className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-white/[0.16] px-4 text-sm text-white/80 hover:bg-white/[0.06]"><FileDown className="h-4 w-4" /> Project backup</a>
           <button type="button" disabled={downloading || (isWebhookIntake && !webhookSecretStatus?.configured)} onClick={() => void downloadWorkflow()} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-full border border-violet-soft/35 bg-violet/[0.12] px-5 text-sm font-medium text-white transition-colors hover:bg-violet/[0.2] disabled:opacity-60">
-            {downloading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}{downloading ? "Preparing workflow" : isWebhookIntake && !webhookSecretStatus?.configured ? "Secure webhook first" : workflowVersions.length ? "Generate new version" : "Download n8n draft"}
+            {downloading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}{downloading ? "Preparing workflow" : isWebhookIntake && !webhookSecretStatus?.configured ? "Secure webhook first" : workflowVersions.length ? "Generate new version" : projectWorkflowKind === "generic_scaffold" ? "Download basic scaffold" : "Download n8n draft"}
           </button>
         </div>
       </div>
       <WorkflowPreview project={project} />
+      {projectWorkflowKind === "generic_scaffold" && <section aria-labelledby="ai-workflow-title" className="mt-5 rounded-2xl border border-violet-soft/20 bg-violet-soft/[0.035] p-5 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div><p className="font-mono-brand text-[10px] uppercase tracking-[0.16em] text-violet-soft">Optional AI draft</p><h2 id="ai-workflow-title" className="mt-2 text-base font-medium text-white">Draft a tailored n8n workflow</h2><p className="mt-1 max-w-2xl text-xs leading-relaxed text-white/55">Uses the saved project brief, requirements, and latest saved plan. AUTQORA redacts common secret patterns and withholds the destination URL. AI is called only when you click; generated JSON is not saved until you choose to save it.</p></div>
+          <button type="button" onClick={() => void draftAiWorkflow()} disabled={aiWorkflowDrafting || aiWorkflowSaving} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-full border border-violet-soft/35 px-4 text-xs text-white hover:bg-violet/[0.1] disabled:opacity-50">{aiWorkflowDrafting && <LoaderCircle className="h-4 w-4 animate-spin" />}{aiWorkflowDrafting ? "Drafting" : "Draft workflow"}</button>
+        </div>
+        {aiWorkflowError && <p role="alert" className="mt-4 rounded-lg border border-[#f0567a]/20 bg-[#f0567a]/[0.05] px-3 py-2.5 text-xs text-[#f58ba0]">{aiWorkflowError}</p>}
+        {aiWorkflowMessage && <p role="status" className="mt-4 text-xs leading-relaxed text-emerald-200">{aiWorkflowMessage}</p>}
+        {aiWorkflowDraft && <div className="mt-5 border-t border-white/[0.08] pt-4">
+          <p className="text-xs leading-relaxed text-white/65">{aiWorkflowDraft.note}</p>
+          <h3 className="mt-4 text-xs font-medium text-white/80">Draft nodes ({aiDraftNodes.length})</h3>
+          <ol className="mt-2 grid gap-2 sm:grid-cols-2">{aiDraftNodes.map((node, index) => <li key={`${index}-${node.name}`} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/[0.07] bg-black/10 px-3 py-2 text-[11px]"><span className="font-mono-brand text-white/35">{index + 1}</span><span className="truncate text-white/75">{node.name}</span><span className="ml-auto max-w-[45%] truncate font-mono-brand text-[9px] text-white/35">{node.type.replace("n8n-nodes-base.", "")}</span></li>)}</ol>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2"><div><h3 className="text-xs font-medium text-white/75">Assumptions</h3>{aiWorkflowDraft.assumptions.length ? <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-white/55">{aiWorkflowDraft.assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="mt-2 text-[11px] text-white/45">None returned.</p>}</div><div><h3 className="text-xs font-medium text-white/75">Limitations to review</h3>{aiWorkflowDraft.limitations.length ? <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-amber-100/70">{aiWorkflowDraft.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="mt-2 text-[11px] text-white/45">The AI returned no limitations; still review each node and provider requirement.</p>}</div></div>
+          <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={downloadAiWorkflowDraft} disabled={aiWorkflowSaving} className="inline-flex h-9 items-center gap-2 rounded-full border border-white/[0.14] px-4 text-xs text-white/80 hover:bg-white/[0.05] disabled:opacity-50"><ArrowDownToLine className="h-3.5 w-3.5" />Download draft JSON</button><button type="button" onClick={() => void saveAiWorkflowDraft()} disabled={aiWorkflowSaving} className="inline-flex h-9 items-center gap-2 rounded-full bg-mist px-4 text-xs font-medium text-ink hover:bg-white disabled:opacity-50">{aiWorkflowSaving && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}{aiWorkflowSaving ? "Saving draft" : "Save as workflow version"}</button></div>
+        </div>}
+      </section>}
       <ProjectActivityTimeline projectId={projectId} />
       <ProjectRequirementsEditor projectId={projectId} initialRequirements={project.requirements} onSaved={() => void refreshPlanFreshness()} />
       {openQuestions.length > 0 && <section aria-labelledby="open-requirements-title" className="mt-5 rounded-xl border border-amber-200/15 bg-amber-100/[0.035] p-4"><h2 id="open-requirements-title" className="text-sm font-medium text-amber-50/90">Questions to answer before building</h2><p className="mt-1 text-xs leading-relaxed text-white/50">These are missing details from the saved brief, not assumptions AUTQORA has filled in.</p><ul className="mt-3 list-disc space-y-1.5 pl-4 text-xs leading-relaxed text-white/70">{openQuestions.map((question) => <li key={question}>{question}</li>)}</ul></section>}
@@ -534,7 +620,7 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
           <ul className="mt-3 space-y-2">
             {workflowVersions.slice(0, 5).map((artifact) => (
               <li key={artifact.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] pt-2 text-xs">
-              <span className="text-white/65">v{artifact.version} · {artifact.scenario === "youtube_clip_publishing_pipeline" || isClipPublishingPipeline && artifact.scenario === "youtube_video_clips" ? "Clip pipeline · partial export" : artifact.scenario === "youtube_video_clips" ? "YouTube video to shorts" : artifact.scenario === "instagram_photo_post" ? "Instagram photo post" : artifact.scenario === "google_sheets_lead_email" ? "Sheets to Gmail lead notification" : artifact.scenario === "webhook_intake" ? "Webhook intake" : artifact.scenario === "webhook_api_forward" ? "Webhook to API" : artifact.scenario === "imported_n8n" ? "Imported n8n workflow" : "Starter scaffold"} · {artifact.sourceStatus === "current" ? "matches current brief and plan" : artifact.sourceStatus === "stale" ? "brief or plan changed" : "source not recorded"} · {new Date(artifact.createdAt).toLocaleString()}</span>
+              <span className="text-white/65">v{artifact.version} · {artifact.scenario === "youtube_clip_publishing_pipeline" || isClipPublishingPipeline && artifact.scenario === "youtube_video_clips" ? "Clip pipeline · partial export" : artifact.scenario === "youtube_video_clips" ? "YouTube video to shorts" : artifact.scenario === "instagram_photo_post" ? "Instagram photo post" : artifact.scenario === "google_sheets_lead_email" ? "Sheets to Gmail lead notification" : artifact.scenario === "webhook_intake" ? "Webhook intake" : artifact.scenario === "webhook_api_forward" ? "Webhook to API" : artifact.scenario === "ai_generated_n8n" ? "AI-generated n8n starter draft" : artifact.scenario === "imported_n8n" ? "Imported n8n workflow" : "Starter scaffold"} · {artifact.sourceStatus === "current" ? "matches current brief and plan" : artifact.sourceStatus === "stale" ? "brief or plan changed" : "source not recorded"} · {new Date(artifact.createdAt).toLocaleString()}</span>
                 <a href={`/api/projects/${projectId}/workflow/versions/${artifact.id}`} className="text-violet-soft underline underline-offset-2">Download this version</a>
               </li>
             ))}
