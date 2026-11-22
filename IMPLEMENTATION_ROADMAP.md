@@ -1,6 +1,6 @@
 # AUTQORA Implementation Roadmap
 
-This roadmap preserves the full AUTQORA vision. Debugging remains one capability in a project-centered implementation platform, not the sole product direction. A bounded owner-scoped JSON backup download now packages project context and evidence while omitting webhook secret material; restoring backups remains future work.
+This roadmap preserves the full AUTQORA vision. Debugging remains one capability in a project-centered implementation platform, not the sole product direction. Bounded owner-scoped JSON backups now omit webhook secret material. Import creates a new project and restores its brief, latest plan, setup checklist, and workflow versions atomically; historical plan revisions, reports, and test evidence are still omitted.
 
 ## Current state and next milestone: Brief → plan → workflow artifact
 

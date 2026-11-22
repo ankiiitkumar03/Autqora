@@ -22,6 +22,7 @@ import type {
   N8nExecutionEvidence,
 } from "@/lib/project-domain";
 import type { DebugDiagnosis, DebugPlatform } from "@/lib/debug-diagnostics";
+import type { ProjectBackupImport } from "@/lib/project-backup";
 
 type ProjectRow = {
   id: string;
@@ -289,6 +290,71 @@ export function createProject(workspaceId: string, input: ProjectCreateInput) {
     if (!project) throw new Error("Created project could not be loaded.");
     db.exec("COMMIT");
     return project;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function importProjectBackup(workspaceId: string, backup: ProjectBackupImport) {
+  const db = database();
+  const projectId = randomUUID();
+  const now = new Date().toISOString();
+  const input = {
+    name: backup.project.name,
+    goal: backup.project.goal,
+    platform: backup.project.platform,
+    requirements: backup.project.requirements,
+  } as ProjectCreateInput;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const count = db.prepare("SELECT COUNT(*) AS count FROM projects WHERE workspace_id = ?").get(workspaceId) as { count: number | bigint };
+    if (Number(count.count) >= 100) throw new ProjectLimitError();
+    db.prepare(
+      "INSERT INTO projects (id, workspace_id, name, goal, platform, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(projectId, workspaceId, input.name, input.goal, input.platform ?? null, backup.project.status, now, now);
+    saveProjectRequirements(workspaceId, projectId, input.requirements);
+
+    if (backup.plan) {
+      const { revision, updatedAt, objective, trigger, implementationSteps, assumptions, verificationChecks } = backup.plan;
+      db.prepare(
+        "INSERT INTO project_plans (project_id, workspace_id, objective, trigger_text, implementation_steps, assumptions, verification_checks, revision, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(projectId, workspaceId, objective, trigger, JSON.stringify(implementationSteps), assumptions, JSON.stringify(verificationChecks), revision, updatedAt);
+      db.prepare(
+        "INSERT INTO project_plan_versions (project_id, workspace_id, revision, objective, trigger_text, implementation_steps, assumptions, verification_checks, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(projectId, workspaceId, revision, objective, trigger, JSON.stringify(implementationSteps), assumptions, JSON.stringify(verificationChecks), updatedAt);
+      if (backup.planFreshness === "current") saveProjectPlanRequirementContext(workspaceId, projectId, db);
+      else if (backup.planFreshness === "requirements_changed") {
+        db.prepare("INSERT INTO project_plan_requirement_context (project_id, workspace_id, requirements_fingerprint, updated_at) VALUES (?, ?, ?, ?)")
+          .run(projectId, workspaceId, "imported-requirements-changed", now);
+      }
+    }
+
+    const artifactIds = new Map<string, string>();
+    const fingerprint = getProjectWorkflowSourceFingerprint(workspaceId, projectId);
+    for (const item of [...backup.workflowVersions].sort((a, b) => a.artifact.version - b.artifact.version)) {
+      const artifactId = randomUUID();
+      artifactIds.set(item.artifact.id, artifactId);
+      db.prepare(
+        "INSERT INTO project_workflow_artifacts (id, project_id, workspace_id, version, name, scenario, workflow_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(artifactId, projectId, workspaceId, item.artifact.version, item.artifact.name, item.artifact.scenario, JSON.stringify(item.workflow), item.artifact.createdAt);
+      if (fingerprint && item.artifact.sourceStatus !== "unknown") {
+        const importedFingerprint = item.artifact.sourceStatus === "current" ? fingerprint : `imported-stale:${fingerprint}`;
+        db.prepare("INSERT INTO project_workflow_source_context (artifact_id, workspace_id, source_fingerprint, created_at) VALUES (?, ?, ?, ?)")
+          .run(artifactId, workspaceId, importedFingerprint, item.artifact.createdAt);
+      }
+    }
+
+    db.prepare("INSERT INTO project_setup (project_id, workspace_id, checks_json, updated_at) VALUES (?, ?, ?, ?)")
+      .run(projectId, workspaceId, JSON.stringify(backup.setup), now);
+    const latestArtifactId = [...backup.workflowVersions].sort((a, b) => b.artifact.version - a.artifact.version)[0];
+    db.prepare("INSERT INTO project_setup_artifact_context (project_id, workspace_id, artifact_id, updated_at) VALUES (?, ?, ?, ?)")
+      .run(projectId, workspaceId, latestArtifactId ? artifactIds.get(latestArtifactId.artifact.id) ?? null : null, now);
+
+    const project = getProject(workspaceId, projectId);
+    if (!project) throw new Error("Imported project could not be loaded.");
+    db.exec("COMMIT");
+    return { project, workflowVersionsImported: artifactIds.size };
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;

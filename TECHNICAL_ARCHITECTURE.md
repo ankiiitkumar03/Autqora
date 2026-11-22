@@ -16,6 +16,7 @@ Browser
   ├─ /api/projects/[id]/workflow (read-only workflow generation plus explicit validated artifact save/import: Instagram, authenticated webhook/API, Sheets → Gmail, archived-video → local clips with optional private YouTube upload)
   ├─ /api/projects/[id]/verification (local JSON checks, user-reported manual evidence, and bounded user-supplied n8n execution summary import)
   ├─ /api/projects/[id]/export (owner-scoped, bounded JSON project backup; secret values and hashes excluded)
+  ├─ /api/projects/import (bounded, versioned backup validation; atomically restores a new project brief, latest plan, checklist, and workflow versions)
   └─ /api/projects/[id]/debug → redacted pattern diagnosis + saved report
   └─ POST /api/debug → Zod request validation → deterministic regex diagnosis
 ```

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ArrowUpRight, FolderKanban, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { ArrowUpRight, FileUp, FolderKanban, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { projectPlatforms, projectStatuses, type Project, type ProjectRequirements, type ProjectStatus } from "@/lib/project-domain";
 import { FieldMappingsEditor } from "@/components/site/field-mappings-editor";
@@ -16,6 +16,7 @@ const statusLabels: Record<ProjectStatus, string> = {
 
 type ProjectResponse = { project?: Project; error?: string };
 type ProjectsResponse = { projects?: Project[]; error?: string };
+type ProjectImportResponse = { project?: Project; workflowVersionsImported?: number; notRestored?: string[]; error?: string };
 
 export function ProjectsWorkspace() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -33,6 +34,8 @@ export function ProjectsWorkspace() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
+  const [importMessage, setImportMessage] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
 
   const loadProjects = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -86,6 +89,32 @@ export function ProjectsWorkspace() {
       setError(saveError instanceof Error ? saveError.message : "Could not save project.");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function importBackup(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setError("");
+    setImportMessage("");
+    setIsImporting(true);
+    try {
+      if (file.size > 20 * 1024 * 1024) throw new Error("Project backup exceeds the 20 MB import limit.");
+      const backup: unknown = JSON.parse(await file.text());
+      const response = await fetch("/api/projects/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(backup),
+      });
+      const result = (await response.json()) as ProjectImportResponse;
+      if (!response.ok || !result.project) throw new Error(result.error ?? "Could not import this project backup.");
+      setProjects((current) => [result.project!, ...current].slice(0, 100));
+      setImportMessage(`Imported “${result.project.name}” with ${result.workflowVersionsImported ?? 0} workflow version(s). Plan history, reports, and test evidence are not restored yet.`);
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "Could not import this project backup.");
+    } finally {
+      setIsImporting(false);
     }
   }
 
@@ -201,8 +230,18 @@ export function ProjectsWorkspace() {
             <p className="font-mono-brand text-[9px] uppercase tracking-[0.18em] text-white/55">Your workspace</p>
             <h2 className="mt-2 font-display text-[1.5rem] tracking-[-0.04em] text-mist">Automation projects</h2>
           </div>
-          <span className="shrink-0 font-mono-brand text-[10px] text-white/50">{projects.length} / 100</span>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <span className="font-mono-brand text-[10px] text-white/50">{projects.length} / 100</span>
+            <label className={`inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-white/[0.1] px-3 text-[10px] text-white/65 transition-colors hover:border-violet-soft/40 hover:text-white ${isImporting ? "pointer-events-none opacity-50" : ""}`}>
+              {isImporting ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <FileUp className="h-3.5 w-3.5" />}
+              {isImporting ? "Importing" : "Import backup"}
+              <input type="file" accept="application/json,.json" className="sr-only" disabled={isImporting} onChange={(event) => void importBackup(event)} />
+            </label>
+          </div>
         </div>
+
+        <p className="mt-2 text-[10px] leading-relaxed text-white/40">Import creates a separate project and restores its brief, latest plan, checklist, and workflow versions. Historical reports and test evidence are not included yet.</p>
+        {importMessage && <p role="status" className="mt-3 rounded-lg border border-violet-soft/20 bg-violet-soft/[0.05] px-3 py-2.5 text-[11px] leading-relaxed text-violet-soft">{importMessage}</p>}
 
         {isLoading ? (
           <div className="flex min-h-56 items-center justify-center gap-2 text-[11px] text-white/35"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading projects</div>
