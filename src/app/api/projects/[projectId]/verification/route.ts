@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const headers = { "Cache-Control": "no-store, max-age=0" };
-const manualEvidenceRequestSchema = z.object({ action: z.literal("record_manual_test"), evidence: manualWorkflowTestEvidenceSchema }).strict();
+const manualEvidenceRequestSchema = z.object({ action: z.literal("record_manual_test"), artifactId: z.string().uuid(), evidence: manualWorkflowTestEvidenceSchema }).strict();
 const n8nExecutionRequestSchema = z.object({ action: z.literal("review_n8n_execution"), artifactId: z.string().uuid(), execution: z.unknown() }).strict();
 
 export async function GET(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
@@ -59,15 +59,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
     if (!parsed.success) {
       return Response.json({ error: "Provide a result, environment, and a short test summary." }, { status: 400, headers });
     }
-    const latestArtifact = getLatestWorkflowArtifact(workspaceId, projectId);
-    if (!latestArtifact) return Response.json({ error: "Generate a workflow version before recording a manual test." }, { status: 409, headers });
+    const artifact = listWorkflowArtifacts(workspaceId, projectId).find((item) => item.id === parsed.data.artifactId);
+    if (!artifact || !getWorkflowArtifact(workspaceId, projectId, artifact.id)) return Response.json({ error: "Select a saved workflow version for this project." }, { status: 404, headers });
     const evidence = {
       ...parsed.data.evidence,
       summary: redactSecrets(parsed.data.evidence.summary),
       executionReference: redactSecrets(parsed.data.evidence.executionReference),
     };
     try {
-      const report = saveManualWorkflowEvidence(workspaceId, projectId, latestArtifact.artifact.id, latestArtifact.artifact.version, evidence);
+      const report = saveManualWorkflowEvidence(workspaceId, projectId, artifact.id, artifact.version, evidence);
       return Response.json({ manualEvidence: report }, { status: 201, headers });
     } catch {
       return Response.json({ error: "Could not save manual test evidence." }, { status: 500, headers });

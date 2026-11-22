@@ -73,6 +73,7 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
   const [verifying, setVerifying] = useState(false);
   const [verificationError, setVerificationError] = useState("");
   const [manualEvidence, setManualEvidence] = useState<ManualWorkflowTestEvidence[]>([]);
+  const [manualArtifactId, setManualArtifactId] = useState("");
   const [manualResult, setManualResult] = useState<ManualWorkflowTestEvidence["result"]>("passed");
   const [manualEnvironment, setManualEnvironment] = useState<ManualWorkflowTestEvidence["environment"]>("n8n_test_url");
   const [manualSummary, setManualSummary] = useState("");
@@ -127,6 +128,7 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
         setOpenQuestions(result.openQuestions ?? []);
         setSetupChecks(setupResult.checks);
         setWorkflowVersions(versionsResult.versions);
+        setManualArtifactId(versionsResult.versions[0]?.id ?? "");
         setExecutionArtifactId(versionsResult.versions[0]?.id ?? "");
         setVerificationReports(verificationResult.reports);
         setManualEvidence(verificationResult.manualEvidence ?? []);
@@ -230,6 +232,7 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
       const history = (await historyResponse.json()) as VersionsResponse;
       if (historyResponse.ok && history.versions) {
         setWorkflowVersions(history.versions);
+        setManualArtifactId(history.versions[0]?.id ?? "");
         setExecutionArtifactId(history.versions[0]?.id ?? "");
       }
       await refreshSetupChecks();
@@ -288,6 +291,7 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
       const history = (await historyResponse.json()) as VersionsResponse;
       if (historyResponse.ok && history.versions) {
         setWorkflowVersions(history.versions);
+        setManualArtifactId(history.versions[0]?.id ?? "");
         setExecutionArtifactId(history.versions[0]?.id ?? "");
       }
       await refreshSetupChecks();
@@ -326,6 +330,7 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
       const history = (await historyResponse.json()) as VersionsResponse;
       if (historyResponse.ok && history.versions) {
         setWorkflowVersions(history.versions);
+        setManualArtifactId(history.versions[0]?.id ?? "");
         setExecutionArtifactId(history.versions[0]?.id ?? "");
       }
       await refreshSetupChecks();
@@ -389,7 +394,7 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
       const response = await fetch(`/api/projects/${projectId}/verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "record_manual_test", evidence: { result: manualResult, environment: manualEnvironment, summary: manualSummary, executionReference } }),
+        body: JSON.stringify({ action: "record_manual_test", artifactId: manualArtifactId, evidence: { result: manualResult, environment: manualEnvironment, summary: manualSummary, executionReference } }),
       });
       const result = (await response.json()) as { manualEvidence?: ManualWorkflowTestEvidence; error?: string };
       if (!response.ok || !result.manualEvidence) throw new Error(result.error ?? "Could not save your manual test result.");
@@ -642,8 +647,9 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
           </div>
         )}
         {workflowVersions.length > 0 && <div className="mt-5 border-t border-white/[0.08] pt-5">
-          <div><h3 className="text-sm font-medium text-white">Record a manual n8n test</h3><p className="mt-1 text-xs leading-relaxed text-white/50">This is your report for workflow v{workflowVersions[0].version}. AUTQORA records it as user-reported evidence; it does not independently confirm the execution.</p></div>
+          <div><h3 className="text-sm font-medium text-white">Record a manual n8n test</h3><p className="mt-1 text-xs leading-relaxed text-white/50">Choose the exact saved workflow version you tested. AUTQORA records your report as user-reported evidence; it does not independently confirm the execution.</p></div>
           <form onSubmit={(event) => void recordManualTest(event)} className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div><label htmlFor="manual-test-artifact" className="block text-xs font-medium text-white/70">Workflow version tested</label><select id="manual-test-artifact" value={manualArtifactId} onChange={(event) => setManualArtifactId(event.target.value)} className="mt-2 h-10 w-full rounded-lg border border-white/[0.12] bg-[#100d17] px-3 text-sm text-white/85" required>{workflowVersions.map((artifact) => <option key={artifact.id} value={artifact.id}>v{artifact.version} · {artifact.scenario.replaceAll("_", " ")}</option>)}</select></div>
             <div><label htmlFor="manual-test-result" className="block text-xs font-medium text-white/70">Test result</label><select id="manual-test-result" value={manualResult} onChange={(event) => setManualResult(event.target.value as ManualWorkflowTestEvidence["result"])} className="mt-2 h-10 w-full rounded-lg border border-white/[0.12] bg-[#100d17] px-3 text-sm text-white/85"><option value="passed">Passed</option><option value="failed">Failed</option><option value="blocked">Blocked</option></select></div>
             <div><label htmlFor="manual-test-environment" className="block text-xs font-medium text-white/70">n8n environment</label><select id="manual-test-environment" value={manualEnvironment} onChange={(event) => setManualEnvironment(event.target.value as ManualWorkflowTestEvidence["environment"])} className="mt-2 h-10 w-full rounded-lg border border-white/[0.12] bg-[#100d17] px-3 text-sm text-white/85"><option value="n8n_test_url">Test URL</option><option value="n8n_production_url">Production URL</option><option value="other">Other / local</option></select></div>
             <div className="sm:col-span-2"><label htmlFor="manual-test-summary" className="block text-xs font-medium text-white/70">What happened? <span className="text-white/45">10–2,000 characters</span></label><textarea id="manual-test-summary" required minLength={10} maxLength={2000} rows={3} value={manualSummary} onChange={(event) => setManualSummary(event.target.value)} placeholder="For example: sent synthetic JSON; the destination returned 200 and the workflow completed." className="mt-2 w-full rounded-lg border border-white/[0.12] bg-[#100d17] px-3 py-3 text-sm leading-relaxed text-white/85 outline-none placeholder:text-white/35 focus-visible:border-violet-soft/70" /></div>
