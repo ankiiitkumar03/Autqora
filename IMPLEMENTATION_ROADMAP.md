@@ -4,6 +4,8 @@ This roadmap preserves the full AUTQORA vision. Debugging remains one capability
 
 The project page also presents a consolidated timeline assembled from saved milestones. It is a review aid, not an immutable audit log; project-field changes are not individually versioned.
 
+Project debugging now persists per-recommendation outcomes (tried, resolved, still failing, or not applicable) with optional secret-redacted notes. Users can use that history to inform a later AI diagnosis; the outcomes remain user-reported and are not treated as independent proof that a fix worked. Backup/import and the activity timeline preserve the feedback.
+
 Generic projects can now request an optional AI-generated inactive n8n draft. The candidate is checked locally and stays unsaved until the user confirms it. Provider quality, instance-specific node compatibility, credentials, and execution remain unverified; treat this as a draft generator, not a live integration.
 
 ## Current state and next milestone: Brief → plan → workflow artifact

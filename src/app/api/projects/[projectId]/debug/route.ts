@@ -45,6 +45,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
 
   const error = redactSecrets(parsed.data.error);
   const expected = redactSecrets(parsed.data.expected);
+  const priorUserReportedFeedback = listProjectDebugReports(workspaceId, projectId)
+    .flatMap((report) => report.stepFeedback
+      .filter((feedback) => feedback.status !== "not_started")
+      .map((feedback) => ({
+        category: report.diagnosis.category,
+        stepIndex: feedback.stepIndex,
+        step: report.diagnosis.steps[feedback.stepIndex] ?? "",
+        status: feedback.status,
+        note: feedback.note,
+        updatedAt: feedback.updatedAt,
+      })))
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+    .slice(0, 12);
   let diagnosis = diagnoseWorkflowError(parsed.data.platform, error, expected);
   let workflowJson: unknown;
   if (parsed.data.workflowJson.trim()) {
@@ -88,6 +101,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
         expected,
         workflowReview: review,
         projectContext: context,
+        priorUserReportedFeedback,
         savedRuleDiagnosis: { category: diagnosis.category, summary: diagnosis.summary, explanation: diagnosis.explanation, steps: diagnosis.steps, evidence: diagnosis.evidence },
       });
       if (review) diagnosis.workflowReview = review;

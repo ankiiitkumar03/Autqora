@@ -73,7 +73,21 @@ const debugDiagnosisSchema = z.object({
       lastNodeExecuted: z.string().max(100).nullable(),
       failedNodes: z.array(z.string().max(100)).max(250),
     }).strict().nullable().optional(),
+    recentDebugOutcomes: z.array(z.object({
+      category: z.string().max(100),
+      stepIndex: z.number().int().nonnegative().max(20),
+      step: z.string().max(500),
+      status: z.enum(["tried", "resolved", "still_failing", "not_applicable"]),
+      note: z.string().max(500),
+      updatedAt: timestampSchema,
+    }).strict()).max(12).optional(),
   }).strict().optional(),
+}).strict();
+const debugStepFeedbackSchema = z.object({
+  stepIndex: z.number().int().nonnegative().max(20),
+  status: z.enum(["not_started", "tried", "resolved", "still_failing", "not_applicable"]),
+  note: z.string().max(500),
+  updatedAt: timestampSchema,
 }).strict();
 const debugReportSchema = z.object({
   id: z.string().uuid(),
@@ -82,6 +96,7 @@ const debugReportSchema = z.object({
   error: z.string().max(8_000),
   expected: z.string().max(1_000),
   diagnosis: debugDiagnosisSchema,
+  stepFeedback: z.array(debugStepFeedbackSchema).max(20).optional().default([]),
   createdAt: timestampSchema,
 }).strict();
 
@@ -144,6 +159,12 @@ export const projectBackupImportSchema = z.object({
   }
   for (const [index, report] of backup.debugReports.entries()) {
     if (report.projectId !== backup.project.id) context.addIssue({ code: "custom", path: ["debugReports", index, "projectId"], message: "Debug report belongs to a different project." });
+    const feedbackIndexes = new Set<number>();
+    for (const [feedbackIndex, feedback] of report.stepFeedback.entries()) {
+      if (feedback.stepIndex >= report.diagnosis.steps.length) context.addIssue({ code: "custom", path: ["debugReports", index, "stepFeedback", feedbackIndex, "stepIndex"], message: "Debug feedback references a missing recommendation step." });
+      if (feedbackIndexes.has(feedback.stepIndex)) context.addIssue({ code: "custom", path: ["debugReports", index, "stepFeedback", feedbackIndex, "stepIndex"], message: "Debug feedback step indexes must be unique." });
+      feedbackIndexes.add(feedback.stepIndex);
+    }
   }
 });
 

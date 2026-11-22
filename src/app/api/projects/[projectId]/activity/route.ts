@@ -83,13 +83,26 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
     title: `User-supplied n8n summary · ${evidence.reportedStatus} · workflow v${evidence.artifactVersion}`,
     detail: evidence.failedNodes.length ? `Reported failed nodes: ${evidence.failedNodes.join(", ")}` : `${evidence.nodeNames.length} node name(s) recorded; AUTQORA did not authenticate the source.`,
   });
-  for (const report of listProjectDebugReports(workspaceId, projectId)) items.push({
+  const debugReports = listProjectDebugReports(workspaceId, projectId);
+  for (const report of debugReports) items.push({
     id: `debug-${report.id}`,
     occurredAt: report.createdAt,
     category: "debug",
     title: `Debug analysis · ${report.diagnosis.category}`,
     detail: report.diagnosis.summary,
   });
+  for (const report of debugReports) {
+    for (const feedback of report.stepFeedback) {
+      if (feedback.status === "not_started") continue;
+      items.push({
+        id: `debug-step-${report.id}-${feedback.stepIndex}`,
+        occurredAt: feedback.updatedAt,
+        category: "debug",
+        title: `User-reported debug step · ${feedback.status.replaceAll("_", " ")}`,
+        detail: `${report.diagnosis.steps[feedback.stepIndex] ?? "Recommendation"}${feedback.note ? ` · ${feedback.note}` : ""}`,
+      });
+    }
+  }
 
   items.sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt));
   return Response.json({ items: items.slice(0, 100), note: "Activity is assembled from saved project records. It is not a security audit log or proof of external workflow execution." }, { headers });

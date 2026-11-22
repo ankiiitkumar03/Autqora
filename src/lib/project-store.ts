@@ -12,6 +12,7 @@ import type {
   ProjectSetup,
   WorkflowArtifact,
   ProjectDebugReport,
+  ProjectDebugStepFeedback,
   ProjectPlatform,
   ProjectStatus,
   ProjectUpdateInput,
@@ -205,6 +206,18 @@ function database() {
     );
     CREATE INDEX IF NOT EXISTS project_debug_reports_recent
       ON project_debug_reports(workspace_id, project_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS project_debug_step_feedback (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      workspace_id TEXT NOT NULL,
+      report_id TEXT NOT NULL REFERENCES project_debug_reports(id) ON DELETE CASCADE,
+      step_index INTEGER NOT NULL CHECK(step_index >= 0),
+      status TEXT NOT NULL CHECK(status IN ('not_started', 'tried', 'resolved', 'still_failing', 'not_applicable')),
+      note TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(report_id, step_index)
+    );
+    CREATE INDEX IF NOT EXISTS project_debug_step_feedback_recent
+      ON project_debug_step_feedback(workspace_id, project_id, updated_at DESC);
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -377,9 +390,17 @@ export function importProjectBackup(workspaceId: string, backup: ProjectBackupIm
       ).run(randomUUID(), projectId, remapArtifactId(evidence.artifactId), workspaceId, evidence.artifactVersion, evidence.executionId, evidence.reportedStatus, JSON.stringify(evidence.nodeNames), evidence.lastNodeExecuted, JSON.stringify(evidence.failedNodes), evidence.reportedAt);
     }
     for (const report of backup.debugReports) {
+      const reportId = randomUUID();
       db.prepare(
         "INSERT INTO project_debug_reports (id, project_id, workspace_id, platform, error_text, expected, diagnosis_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(randomUUID(), projectId, workspaceId, report.platform, report.error, report.expected, JSON.stringify(report.diagnosis), report.createdAt);
+      ).run(reportId, projectId, workspaceId, report.platform, report.error, report.expected, JSON.stringify(report.diagnosis), report.createdAt);
+      const feedbackByIndex = new Map(report.stepFeedback.map((feedback) => [feedback.stepIndex, feedback]));
+      report.diagnosis.steps.forEach((_step, stepIndex) => {
+        const feedback = feedbackByIndex.get(stepIndex);
+        db.prepare(
+          "INSERT INTO project_debug_step_feedback (project_id, workspace_id, report_id, step_index, status, note, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ).run(projectId, workspaceId, reportId, stepIndex, feedback?.status ?? "not_started", feedback?.note ?? "", feedback?.updatedAt ?? report.createdAt);
+      });
     }
 
     const project = getProject(workspaceId, projectId);
@@ -840,6 +861,14 @@ type ProjectDebugReportRow = {
   created_at: string;
 };
 
+type ProjectDebugStepFeedbackRow = {
+  report_id: string;
+  step_index: number;
+  status: ProjectDebugStepFeedback["status"];
+  note: string;
+  updated_at: string;
+};
+
 function toProjectDebugReport(row: ProjectDebugReportRow): ProjectDebugReport {
   return {
     id: row.id,
@@ -848,6 +877,7 @@ function toProjectDebugReport(row: ProjectDebugReportRow): ProjectDebugReport {
     error: row.error_text,
     expected: row.expected,
     diagnosis: JSON.parse(row.diagnosis_json) as DebugDiagnosis,
+    stepFeedback: [],
     createdAt: row.created_at,
   };
 }
@@ -856,7 +886,21 @@ export function listProjectDebugReports(workspaceId: string, projectId: string) 
   const rows = database().prepare(
     "SELECT id, project_id, platform, error_text, expected, diagnosis_json, created_at FROM project_debug_reports WHERE workspace_id = ? AND project_id = ? ORDER BY created_at DESC LIMIT 20"
   ).all(workspaceId, projectId) as unknown as ProjectDebugReportRow[];
-  return rows.map(toProjectDebugReport);
+  const feedbackRows = database().prepare(
+    "SELECT report_id, step_index, status, note, updated_at FROM project_debug_step_feedback WHERE workspace_id = ? AND project_id = ?"
+  ).all(workspaceId, projectId) as unknown as ProjectDebugStepFeedbackRow[];
+  const feedbackByReport = new Map<string, ProjectDebugStepFeedback[]>();
+  for (const row of feedbackRows) {
+    const list = feedbackByReport.get(row.report_id) ?? [];
+    list.push({ stepIndex: row.step_index, status: row.status, note: row.note, updatedAt: row.updated_at });
+    feedbackByReport.set(row.report_id, list);
+  }
+  return rows.map((row) => ({
+    ...toProjectDebugReport(row),
+    stepFeedback: feedbackByReport.get(row.id) ?? (JSON.parse(row.diagnosis_json) as DebugDiagnosis).steps.map((_step, stepIndex) => ({
+      stepIndex, status: "not_started" as const, note: "", updatedAt: row.created_at,
+    })),
+  }));
 }
 
 export function saveProjectDebugReport(workspaceId: string, projectId: string, platform: DebugPlatform, error: string, expected: string, diagnosis: DebugDiagnosis) {
@@ -866,11 +910,47 @@ export function saveProjectDebugReport(workspaceId: string, projectId: string, p
   db.prepare(
     "INSERT INTO project_debug_reports (id, project_id, workspace_id, platform, error_text, expected, diagnosis_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(id, projectId, workspaceId, platform, error, expected, JSON.stringify(diagnosis), now);
+  diagnosis.steps.forEach((_step, stepIndex) => {
+    db.prepare(
+      "INSERT INTO project_debug_step_feedback (project_id, workspace_id, report_id, step_index, status, note, updated_at) VALUES (?, ?, ?, ?, 'not_started', '', ?)"
+    ).run(projectId, workspaceId, id, stepIndex, now);
+  });
   db.prepare(
     `DELETE FROM project_debug_reports WHERE workspace_id = ? AND project_id = ? AND id NOT IN
      (SELECT id FROM project_debug_reports WHERE workspace_id = ? AND project_id = ? ORDER BY created_at DESC LIMIT 50)`
   ).run(workspaceId, projectId, workspaceId, projectId);
   return listProjectDebugReports(workspaceId, projectId).find((report) => report.id === id) ?? null;
+}
+
+export function updateProjectDebugStepFeedback(
+  workspaceId: string,
+  projectId: string,
+  reportId: string,
+  stepIndex: number,
+  status: ProjectDebugStepFeedback["status"],
+  note: string,
+) {
+  const db = database();
+  const report = db.prepare(
+    "SELECT diagnosis_json FROM project_debug_reports WHERE id = ? AND workspace_id = ? AND project_id = ?"
+  ).get(reportId, workspaceId, projectId) as { diagnosis_json: string } | undefined;
+  if (!report) return null;
+  const diagnosis = JSON.parse(report.diagnosis_json) as DebugDiagnosis;
+  if (!Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex >= diagnosis.steps.length) return null;
+  db.prepare(
+    "INSERT INTO project_debug_step_feedback (project_id, workspace_id, report_id, step_index, status, note, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(report_id, step_index) DO UPDATE SET status = excluded.status, note = excluded.note, updated_at = excluded.updated_at"
+  ).run(projectId, workspaceId, reportId, stepIndex, status, note, new Date().toISOString());
+  const refreshed = db.prepare(
+    "SELECT id, project_id, platform, error_text, expected, diagnosis_json, created_at FROM project_debug_reports WHERE id = ? AND workspace_id = ? AND project_id = ?"
+  ).get(reportId, workspaceId, projectId) as ProjectDebugReportRow | undefined;
+  if (!refreshed) return null;
+  const feedbackRows = db.prepare(
+    "SELECT report_id, step_index, status, note, updated_at FROM project_debug_step_feedback WHERE report_id = ? AND workspace_id = ? AND project_id = ? ORDER BY step_index"
+  ).all(reportId, workspaceId, projectId) as unknown as ProjectDebugStepFeedbackRow[];
+  return {
+    ...toProjectDebugReport(refreshed),
+    stepFeedback: feedbackRows.map((row) => ({ stepIndex: row.step_index, status: row.status, note: row.note, updatedAt: row.updated_at })),
+  };
 }
 
 type UserRow = { id: string; email: string; password_salt: string; password_hash: string; workspace_id: string };

@@ -131,7 +131,15 @@ export type ProjectDebugReport = {
   error: string;
   expected: string;
   diagnosis: import("@/lib/debug-diagnostics").DebugDiagnosis;
+  stepFeedback: ProjectDebugStepFeedback[];
   createdAt: string;
+};
+
+export type ProjectDebugStepFeedback = {
+  stepIndex: number;
+  status: "not_started" | "tried" | "resolved" | "still_failing" | "not_applicable";
+  note: string;
+  updatedAt: string;
 };
 
 export type WorkflowVerification = {

@@ -21,6 +21,14 @@ export type DebugDiagnosis = {
       lastNodeExecuted: string | null;
       failedNodes: string[];
     } | null;
+    recentDebugOutcomes?: Array<{
+      category: string;
+      stepIndex: number;
+      step: string;
+      status: "tried" | "resolved" | "still_failing" | "not_applicable";
+      note: string;
+      updatedAt: string;
+    }>;
   };
 };
 
