@@ -167,12 +167,17 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
               parameters: {
                 resume: "form",
                 formTitle: "Review clips before publishing",
-                formDescription: `={{ "Review every clip from this run before any upload. Open each clip, then approve or reject the whole batch. A rejection or 24-hour timeout stops publishing.<ol>" + $("${downloadGateName}").all().map((item, index) => { const rawUrl = String(item.json.downloadUrl ?? ""); const safeUrl = /^https?:\\/\\//i.test(rawUrl) ? rawUrl.replaceAll("&", "&amp;").replaceAll("\\\"", "&quot;").replaceAll("<", "&lt;") : ""; const start = Number(item.json.startSeconds); return "<li>" + (safeUrl ? "<a href=\\\"" + safeUrl + "\\\">Open clip " + (index + 1) + "</a>" : "Clip " + (index + 1) + " link unavailable") + (Number.isFinite(start) ? " · starts at " + start + " seconds" : "") + "</li>"; }).join("") + "</ol>" }}`,
+                formDescription: `={{ "Review the clips from this run before any upload. Select individual clip numbers, Approve all clips, or Reject all clips. Reject all takes precedence. If a selected number is not in this run, publishing stops. A 24-hour timeout also stops publishing.<ol>" + $("${downloadGateName}").all().map((item, index) => { const rawUrl = String(item.json.downloadUrl ?? ""); const safeUrl = /^https?:\\/\\//i.test(rawUrl) ? rawUrl.replaceAll("&", "&amp;").replaceAll("\\\"", "&quot;").replaceAll("<", "&lt;") : ""; const start = Number(item.json.startSeconds); return "<li>" + (safeUrl ? "<a href=\\\"" + safeUrl + "\\\">Open clip " + (index + 1) + "</a>" : "Clip " + (index + 1) + " link unavailable") + (Number.isFinite(start) ? " · starts at " + start + " seconds" : "") + "</li>"; }).join("") + "</ol>" }}`,
                 formFields: {
                   values: [{
-                    fieldLabel: "Publishing decision",
-                    fieldType: "dropdown",
-                    fieldOptions: { values: [{ option: "Approve all clips" }, { option: "Reject all clips" }] },
+                    fieldLabel: "Select clips to publish",
+                    fieldType: "checkbox",
+                    fieldOptions: { values: [
+                      { option: "Approve all clips" },
+                      ...Array.from({ length: 10 }, (_, index) => ({ option: `Approve clip ${index + 1}` })),
+                      { option: "Reject all clips" },
+                    ] },
+                    limitSelection: "unlimited",
                     requiredField: true,
                   }],
                 },
@@ -191,7 +196,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
             {
               parameters: {
                 mode: "runOnceForAllItems",
-                jsCode: `const decision = $input.first()?.json?.["Publishing decision"];\nif (decision !== "Approve all clips") return [];\n// The Wait form emits its submitted fields, so restore the exact opted-in clips from this execution.\nreturn $("${downloadGateName}").all().filter((item) => item.json.publishToYouTube === true || item.json.publishToInstagram === true);`,
+                jsCode: `const selections = $input.first()?.json?.["Select clips to publish"];\nif (!Array.isArray(selections) || selections.length === 0 || selections.some((choice) => typeof choice !== "string")) return [];\nif (selections.includes("Reject all clips")) return [];\nconst clips = $("${downloadGateName}").all().filter((item) => item.json.publishToYouTube === true || item.json.publishToInstagram === true);\nconst approveAll = selections.includes("Approve all clips");\nconst approved = new Set();\nfor (const choice of selections) {\n  if (choice === "Approve all clips") continue;\n  const match = /^Approve clip (\\d{1,2})$/.exec(choice);\n  if (!match) return [];\n  const clipNumber = Number(match[1]);\n  if (clipNumber < 1 || clipNumber > clips.length) return [];\n  approved.add(clipNumber);\n}\nif (approveAll) return clips;\n// The Wait form replaces its output, so return only the individually approved clips from this execution.\nreturn clips.filter((_, index) => approved.has(index + 1));`,
               },
               id: randomUUID(), name: approvalGateName, type: "n8n-nodes-base.code", typeVersion: 2, position: [1700, 300],
             },

@@ -198,7 +198,7 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
     ? (reviewParameters.formFields as { values?: unknown }).values
     : null;
   const decisionField = Array.isArray(reviewFields)
-    ? reviewFields.find((field) => field && typeof field === "object" && (field as Record<string, unknown>).fieldLabel === "Publishing decision") as Record<string, unknown> | undefined
+    ? reviewFields.find((field) => field && typeof field === "object" && (field as Record<string, unknown>).fieldLabel === "Select clips to publish") as Record<string, unknown> | undefined
     : undefined;
   const decisionChoices = decisionField?.fieldOptions && typeof decisionField.fieldOptions === "object"
     ? (decisionField.fieldOptions as { values?: unknown }).values
@@ -206,6 +206,7 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
   const decisionChoiceLabels = Array.isArray(decisionChoices)
     ? decisionChoices.map((choice) => choice && typeof choice === "object" ? (choice as Record<string, unknown>).option : null)
     : [];
+  const expectedClipChoices = ["Approve all clips", ...Array.from({ length: 10 }, (_, index) => `Approve clip ${index + 1}`), "Reject all clips"];
   const approvalNode = nodes.find((node) => node.name === approvalGateName);
   const approvalCode = approvalNode?.parameters && typeof approvalNode.parameters === "object"
     ? (approvalNode.parameters as Record<string, unknown>).jsCode
@@ -219,17 +220,21 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
     && reviewParameters.limitType === "afterTimeInterval"
     && reviewParameters.resumeAmount === 24
     && reviewParameters.resumeUnit === "hours"
-    && decisionField?.fieldType === "dropdown"
+    && decisionField?.fieldType === "checkbox"
+    && decisionField.limitSelection === "unlimited"
     && decisionField.requiredField === true
-    && decisionChoiceLabels.includes("Approve all clips")
-    && decisionChoiceLabels.includes("Reject all clips")
+    && expectedClipChoices.every((choice) => decisionChoiceLabels.includes(choice))
     && typeof reviewParameters.formDescription === "string"
     && String(reviewParameters.formDescription).includes("downloadUrl")
     && String(reviewParameters.formDescription).includes("startSeconds")
     && approvalNode?.type === "n8n-nodes-base.code"
     && typeof approvalCode === "string"
-    && approvalCode.includes('["Publishing decision"]')
-    && approvalCode.includes('decision !== "Approve all clips"')
+    && approvalCode.includes('["Select clips to publish"]')
+    && approvalCode.includes('selections.includes("Reject all clips")')
+    && approvalCode.includes('choice === "Approve all clips"')
+    && approvalCode.includes('if (approveAll) return clips;')
+    && approvalCode.includes('if (!match) return [];')
+    && approvalCode.includes("clipNumber > clips.length")
     && approvalCode.includes(`$("${downloadGateName}").all()`)
     && approvalCode.includes("publishToYouTube === true")
     && approvalCode.includes("publishToInstagram === true")
@@ -319,9 +324,9 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
         : scenario === "google_sheets_lead_email"
           ? "Google Sheets row trigger, email validation, and Gmail notification nodes were found. Import and test the provider credentials in n8n before enabling it."
         : scenario === "youtube_video_clips"
-          ? "Manual run, clip-worker request, clip-link output, and optional YouTube upload steps were found. Opted-in uploads pass through a same-run batch review form; upload opt-in, title, description, and visibility are configurable. This does not capture live streams or publish to Instagram."
+          ? "Manual run, clip-worker request, clip-link output, and optional YouTube upload steps were found. Opted-in uploads pass through a same-run individual clip review form; upload opt-in, title, description, and visibility are configurable. This does not capture live streams or publish to Instagram."
         : scenario === "youtube_clip_publishing_pipeline"
-          ? "Archived-video clip generation, same-run batch approval, and opt-in YouTube/Instagram upload steps were found. Provider credentials and user opt-in are required; live capture, meaningful-moment selection, and individual per-clip approval are not included."
+          ? "Archived-video clip generation, same-run individual clip approval, and opt-in YouTube/Instagram upload steps were found. Provider credentials and user opt-in are required; live capture and meaningful-moment selection are not included."
           : "Webhook intake and JSON response steps were found. This does not prove n8n import or a live request."
         : "No implemented scenario-specific workflow was detected; this export is a generic scaffold.",
     },
@@ -337,7 +342,7 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
       label: "YouTube metadata and platform choices",
       passed: clipPublishingControlsPass,
       detail: clipPublishingControlsPass
-        ? "The clip options expose YouTube metadata and privacy; opted-in clips pause at a batch review form before download, rejection or timeout publishes nothing, and each publisher remains behind its platform opt-in filter. This checks workflow structure only; it does not verify provider behavior or execution."
+        ? "The clip options expose YouTube metadata and privacy; opted-in clips pause at an individual selection form before download, rejection or timeout publishes nothing, and each publisher remains behind its platform opt-in filter. This checks workflow structure only; it does not verify provider behavior or execution."
         : "The workflow is missing clip publishing settings, a fail-closed review form, or a required opt-in-gated publishing connection. Regenerate the workflow and review its platform branches.",
     }, {
       id: "clip_review_gate",
@@ -348,8 +353,8 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
         && hasConnection(approvalGateName, downloadName)
       )),
       detail: reviewFormPass
-        ? "The required form lists the opted-in clips and start times from the current run; only an explicit batch approval restores those exact items for upload. A rejection or 24-hour timeout fails closed. Individual per-clip approval is not provided."
-        : "The workflow must pause for a required batch decision, show the current run's clip links and start times, and restore clips only after an explicit approval.",
+        ? "The required form lists the opted-in clips and start times from the current run; the user can approve all or select individual clips, and only those exact items are restored for upload. Rejection, invalid choices, or a 24-hour timeout fail closed."
+        : "The workflow must pause for a required decision, show the current run's clip links and start times, and restore only explicitly approved clips.",
     }] : []),
     {
       id: "placeholders",
