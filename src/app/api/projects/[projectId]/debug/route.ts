@@ -14,8 +14,53 @@ const schema = z.object({
   error: z.string().trim().min(5).max(8_000),
   expected: z.string().trim().max(1_000).optional().default(""),
   workflowJson: z.string().max(24_000).optional().default(""),
+  screenshot: z.object({
+    mediaType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+    dataUrl: z.string().max(2_800_000),
+  }).strict().optional(),
 }).strict();
 const headers = { "Cache-Control": "no-store, max-age=0" };
+const maxRequestBytes = 3_000_000;
+const maxScreenshotBytes = 2 * 1024 * 1024;
+
+async function readBoundedBody(request: Request) {
+  const reader = request.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let body = "";
+  let bytesRead = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytesRead += value.byteLength;
+    if (bytesRead > maxRequestBytes) {
+      await reader.cancel();
+      return null;
+    }
+    body += decoder.decode(value, { stream: true });
+  }
+  return body + decoder.decode();
+}
+
+type ScreenshotMediaType = "image/png" | "image/jpeg" | "image/webp";
+
+function decodeScreenshot(dataUrl: string, expectedMediaType: ScreenshotMediaType): { mediaType: ScreenshotMediaType; base64: string } | null {
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
+  if (!match || match[1] !== expectedMediaType) return null;
+  const [, matchedMediaType, encoded] = match;
+  const mediaType = matchedMediaType as ScreenshotMediaType;
+  const buffer = Buffer.from(encoded, "base64");
+  if (buffer.length === 0 || buffer.length > maxScreenshotBytes || buffer.toString("base64").replace(/=+$/, "") !== encoded.replace(/=+$/, "")) return null;
+  const actualMediaType = buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    ? "image/png"
+    : buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff
+      ? "image/jpeg"
+      : buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WEBP"
+        ? "image/webp"
+        : null;
+  if (actualMediaType !== mediaType) return null;
+  return { mediaType, base64: encoded };
+}
 
 export async function GET(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const workspaceId = getWorkspaceId(request);
@@ -30,18 +75,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   const { projectId } = await params;
   if (!workspaceId || !getProject(workspaceId, projectId)) return Response.json({ error: "Project not found." }, { status: 404, headers });
   const contentLength = Number(request.headers.get("content-length") ?? 0);
-  if (contentLength > 32_768) return Response.json({ error: "Keep the request under 32 KB." }, { status: 413, headers });
+  if (contentLength > maxRequestBytes) return Response.json({ error: "Keep the request under 3 MB. Screenshots may be up to 2 MB." }, { status: 413, headers });
   let body: unknown;
   try {
-    const raw = await request.text();
-    if (raw.length > 32_768) return Response.json({ error: "Keep the request under 32 KB." }, { status: 413, headers });
+    const raw = await readBoundedBody(request);
+    if (raw === null || Buffer.byteLength(raw, "utf8") > maxRequestBytes) return Response.json({ error: "Keep the request under 3 MB. Screenshots may be up to 2 MB." }, { status: 413, headers });
     body = JSON.parse(raw);
   } catch {
     return Response.json({ error: "Send valid JSON with a sanitized error message." }, { status: 400, headers });
   }
   const parsed = schema.safeParse(body);
-  if (!parsed.success) return Response.json({ error: "Choose a platform, provide an error message between 5 and 8,000 characters, and keep optional workflow JSON under 24 KB." }, { status: 400, headers });
+  if (!parsed.success) return Response.json({ error: "Choose a platform, provide an error message between 5 and 8,000 characters, keep workflow JSON under 24 KB, and attach only a PNG, JPEG, or WebP screenshot under 2 MB." }, { status: 400, headers });
   if (parsed.data.workflowJson.trim() && parsed.data.platform !== "n8n") return Response.json({ error: "Workflow JSON review is currently available for n8n projects." }, { status: 400, headers });
+  const decodedScreenshot = parsed.data.screenshot ? decodeScreenshot(parsed.data.screenshot.dataUrl, parsed.data.screenshot.mediaType) : undefined;
+  if (parsed.data.screenshot && decodedScreenshot === null) return Response.json({ error: "The screenshot could not be validated. Use a PNG, JPEG, or WebP image under 2 MB." }, { status: 400, headers });
+  const screenshot = decodedScreenshot ?? undefined;
 
   const error = redactSecrets(parsed.data.error);
   const expected = redactSecrets(parsed.data.expected);
@@ -102,8 +150,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
         workflowReview: review,
         projectContext: context,
         priorUserReportedFeedback,
+        screenshot,
         savedRuleDiagnosis: { category: diagnosis.category, summary: diagnosis.summary, explanation: diagnosis.explanation, steps: diagnosis.steps, evidence: diagnosis.evidence },
       });
+      if (screenshot) diagnosis.screenshotAnalyzed = true;
       if (review) diagnosis.workflowReview = review;
       if (context) diagnosis.projectContext = context;
     } catch (aiError) {

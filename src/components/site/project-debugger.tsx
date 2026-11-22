@@ -6,6 +6,7 @@ import { debugPlatforms, type DebugDiagnosis, type DebugPlatform } from "@/lib/d
 import type { ProjectDebugReport } from "@/lib/project-domain";
 
 type ResponseData = { reports?: ProjectDebugReport[]; report?: ProjectDebugReport; error?: string };
+type DebugScreenshot = { name: string; mediaType: "image/png" | "image/jpeg" | "image/webp"; dataUrl: string };
 
 export function ProjectDebugger({ projectId, initialPlatform }: { projectId: string; initialPlatform: string | null }) {
   const [platform, setPlatform] = useState<DebugPlatform>(debugPlatforms.includes(initialPlatform as DebugPlatform) ? initialPlatform as DebugPlatform : "n8n");
@@ -18,6 +19,8 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
   const [feedbackBusy, setFeedbackBusy] = useState("");
   const [feedbackError, setFeedbackError] = useState("");
   const [feedbackDrafts, setFeedbackDrafts] = useState<Record<string, { status: string; note: string }>>({});
+  const [screenshot, setScreenshot] = useState<DebugScreenshot | null>(null);
+  const [screenshotError, setScreenshotError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -37,7 +40,14 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
       const response = await fetch(`/api/projects/${projectId}/debug`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform, mode, error: errorText, expected, workflowJson }),
+        body: JSON.stringify({
+          platform,
+          mode,
+          error: errorText,
+          expected,
+          workflowJson,
+          ...(mode === "ai" && screenshot ? { screenshot: { mediaType: screenshot.mediaType, dataUrl: screenshot.dataUrl } } : {}),
+        }),
       });
       const result = (await response.json()) as ResponseData;
       if (!response.ok || !result.report) throw new Error(result.error ?? "Could not analyze this error.");
@@ -48,6 +58,34 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
     } finally {
       setBusy(false);
     }
+  }
+
+  function loadScreenshot(file: File | undefined) {
+    setScreenshotError("");
+    if (!file) return;
+    setScreenshot(null);
+    if (file.size > 2 * 1024 * 1024) {
+      setScreenshot(null);
+      setScreenshotError("Choose a screenshot smaller than 2 MB.");
+      return;
+    }
+    const extensionType: Record<string, DebugScreenshot["mediaType"]> = {
+      png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp",
+    };
+    const extension = file.name.toLowerCase().split(".").pop() ?? "";
+    const mediaType = (file.type || extensionType[extension]) as DebugScreenshot["mediaType"] | undefined;
+    if (!mediaType || !["image/png", "image/jpeg", "image/webp"].includes(mediaType)) {
+      setScreenshot(null);
+      setScreenshotError("Use a PNG, JPEG, or WebP screenshot.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") setScreenshot({ name: file.name, mediaType, dataUrl: reader.result });
+      else setScreenshotError("Could not read that screenshot.");
+    };
+    reader.onerror = () => setScreenshotError("Could not read that screenshot.");
+    reader.readAsDataURL(file);
   }
 
   async function saveStepFeedback(reportId: string, stepIndex: number, savedStatus: string, savedNote: string) {
@@ -86,6 +124,13 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
         <div><label htmlFor="debug-error" className="block text-sm font-medium text-white/80">What error did the run show?</label><textarea id="debug-error" required minLength={5} maxLength={8000} rows={5} value={errorText} onChange={(event) => setErrorText(event.target.value)} placeholder="Paste the error message or relevant log excerpt. Remove personal data if possible." className={textareaClass} /></div>
         <div><label htmlFor="debug-expected" className="block text-sm font-medium text-white/80">What did you expect? <span className="font-normal text-white/45">Optional</span></label><textarea id="debug-expected" maxLength={1000} rows={2} value={expected} onChange={(event) => setExpected(event.target.value)} className={textareaClass} /></div>
         <div><label htmlFor="debug-workflow-json" className="block text-sm font-medium text-white/80">Workflow JSON <span className="font-normal text-white/45">Optional · max 24 KB</span></label><textarea id="debug-workflow-json" maxLength={24000} rows={5} value={workflowJson} onChange={(event) => setWorkflowJson(event.target.value)} placeholder="Paste the n8n workflow JSON to check its structure, references, placeholders, and credential setup." className={textareaClass} /><p className="mt-1 text-xs leading-relaxed text-white/45">AUTQORA analyzes this in memory and saves only the diagnosis summary. Remove credentials, personal data, and private URLs before pasting.</p></div>
+        <div>
+          <label htmlFor="debug-screenshot" className="block text-sm font-medium text-white/80">Screenshot <span className="font-normal text-white/45">Optional · AI analysis only · max 2 MB</span></label>
+          <input id="debug-screenshot" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; loadScreenshot(file); }} className="mt-2 block w-full text-xs text-white/65 file:mr-3 file:rounded-full file:border-0 file:bg-white/[0.08] file:px-3 file:py-2 file:text-xs file:text-white/80 hover:file:bg-white/[0.12]" />
+          <p className="mt-1 text-xs leading-relaxed text-white/45">The screenshot is sent to OpenAI only when you click Ask AI and is not saved in the project. Local analysis ignores it. Remove passwords, tokens, account details, and personal information before attaching.</p>
+          {screenshot && <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-white/[0.08] px-3 py-2"><span className="truncate text-xs text-white/65">Attached for AI analysis: {screenshot.name}</span><button type="button" onClick={() => { setScreenshot(null); setScreenshotError(""); }} className="shrink-0 text-xs text-violet-soft underline underline-offset-2">Remove</button></div>}
+          {screenshotError && <p role="alert" className="mt-2 text-xs text-[#f58ba0]">{screenshotError}</p>}
+        </div>
         {error && <p role="alert" className="text-sm text-[#f58ba0]">{error}</p>}
         <div className="flex flex-wrap gap-2"><button type="submit" disabled={busy || errorText.trim().length < 5} className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-mist px-5 text-sm font-medium text-ink hover:bg-white disabled:opacity-50">{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SearchCheck className="h-4 w-4" />}{busy ? "Analyzing" : "Analyze locally and save"}</button><button type="button" onClick={() => void diagnose("ai")} disabled={busy || errorText.trim().length < 5} className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-violet-soft/35 px-4 text-sm text-white/80 hover:bg-violet/[0.1] disabled:opacity-50">{busy ? "Analyzing" : "Ask AI"}</button></div>
         <p className="text-xs leading-relaxed text-white/45">AI analysis sends the redacted error, expected outcome, saved project evidence, and recent user-reported step outcomes and notes to OpenAI only when you click Ask AI. Pasted workflow JSON is reviewed locally; only its structural summary may be sent. Remove personal data and credentials from error text and notes.</p>
@@ -94,6 +139,7 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
         <p className="text-xs font-medium uppercase tracking-wide text-violet-soft">{latest.category}</p>
         <h3 className="mt-2 text-base font-semibold text-white">{latest.summary}</h3>
         <p className="mt-2 text-sm leading-relaxed text-white/65">{latest.explanation}</p>
+        {latest.screenshotAnalyzed && <p className="mt-2 text-xs text-white/45">AI analyzed the attached screenshot. The original image was not saved with this report.</p>}
         <ol className="mt-4 space-y-3 pl-5 text-sm leading-relaxed text-white/70">
           {latest.steps.map((step, index) => {
             const saved = latestReport.stepFeedback.find((item) => item.stepIndex === index);

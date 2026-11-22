@@ -9,6 +9,7 @@ export type DebugDiagnosis = {
   steps: string[];
   evidence: string;
   note: string;
+  screenshotAnalyzed?: boolean;
   workflowReview?: import("@/lib/project-workflow").WorkflowDebugReview;
   projectContext?: {
     workflowVersion: number;
