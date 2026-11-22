@@ -6,7 +6,7 @@ This local service downloads a completed, archived, public YouTube video that yo
 
 1. If `.env` does not exist, copy `.env.example` to `.env` and replace the sample with a random key of at least 32 characters. Keep an existing `.env` key; do not overwrite it.
 2. In PowerShell, from this folder, run `docker compose up -d --build`.
-3. Confirm the worker responds at `http://localhost:8090/health`.
+3. Confirm the worker responds at `http://localhost:8090/health` and check `docker compose ps` for a `healthy` state. The endpoint and Compose healthcheck verify that FFmpeg runs and the worker API key is configured; neither check contacts YouTube or tests a clip job.
 4. In n8n, create a **Header Auth** credential named `AUTQORA Clip Worker`, with header name `Authorization` and value `Bearer <the key from .env>`. On Windows, read the local value in PowerShell with `Get-Content .env`; keep it private and do not put it in AUTQORA project fields.
 5. Import the AUTQORA workflow and select that credential on **Create vertical clips with FFmpeg**.
 6. In **Set clip options**, set a YouTube video URL, clip count (1–10), duration (15–20 seconds), and selection mode (`evenly_spaced` or `scene_change`). The requested clips must fit without overlapping in the source duration. Run manually; the final node returns local download links and the selection basis for each clip.

@@ -11,6 +11,16 @@ services:
       - "127.0.0.1:8090:8090"
     volumes:
       - autqora_clips:/app/clips
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   autqora_clips:

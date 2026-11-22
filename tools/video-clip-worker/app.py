@@ -157,7 +157,23 @@ def remove_expired_clip_jobs(now: float | None = None) -> None:
 
 @app.get("/health")
 def health():
-    return {"ok": True, "ffmpeg": bool(subprocess.run(["ffmpeg", "-version"], capture_output=True).returncode == 0)}
+    try:
+        ffmpeg_available = subprocess.run(
+            ["ffmpeg", "-version"], capture_output=True, timeout=3, check=False,
+        ).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ffmpeg_available = False
+    api_key_configured = len(API_KEY) >= 32
+    if not ffmpeg_available or not api_key_configured:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Clip worker is not ready.",
+                "ffmpegAvailable": ffmpeg_available,
+                "apiKeyConfigured": api_key_configured,
+            },
+        )
+    return {"ok": True, "ffmpegAvailable": True, "apiKeyConfigured": True}
 
 
 @app.post("/clips")
