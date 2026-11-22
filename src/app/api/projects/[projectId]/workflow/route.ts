@@ -125,7 +125,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
             {
               parameters: {
                 mode: "runOnceForAllItems",
-                jsCode: `// Use a public archived video you own or are authorized to process. Live capture is not supported.\n// Choose evenly_spaced or scene_change (visual cuts only, not semantic highlight detection).\n// Uploads create real posts. Keep all opt-ins false until you have reviewed a prior clip run.\n// Choose YouTube privacyStatus: private, unlisted, or public.\nreturn [{ json: { sourceUrl: "REPLACE_WITH_PUBLIC_YOUTUBE_VIDEO_URL", clipCount: 5, clipDurationSeconds: 18, selectionMode: "evenly_spaced", publishToYouTube: false, publishToInstagram: false, youtubeTitlePrefix: "Short", youtubeDescription: "Short clip generated from an authorized source video by AUTQORA.", youtubePrivacyStatus: "private"${instagramOptions} } }];`,
+                jsCode: `// Use a public archived video you own or are authorized to process. Live capture is not supported.\n// Choose evenly_spaced, scene_change (visual cuts only), or manual_timestamps.\n// For manual_timestamps, set one ascending, non-overlapping start in seconds per clip in clipStartsSeconds.\n// Uploads create real posts. Keep all opt-ins false until you have reviewed a prior clip run.\n// Choose YouTube privacyStatus: private, unlisted, or public.\nreturn [{ json: { sourceUrl: "REPLACE_WITH_PUBLIC_YOUTUBE_VIDEO_URL", clipCount: 5, clipDurationSeconds: 18, selectionMode: "evenly_spaced", clipStartsSeconds: [], publishToYouTube: false, publishToInstagram: false, youtubeTitlePrefix: "Short", youtubeDescription: "Short clip generated from an authorized source video by AUTQORA.", youtubePrivacyStatus: "private"${instagramOptions} } }];`,
               },
               id: randomUUID(), name: configName, type: "n8n-nodes-base.code", typeVersion: 2, position: [460, 300],
             },
@@ -138,7 +138,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 sendBody: true,
                 contentType: "json",
                 specifyBody: "json",
-                jsonBody: "={{ { sourceUrl: $json.sourceUrl, clipCount: $json.clipCount, clipDurationSeconds: $json.clipDurationSeconds, selectionMode: $json.selectionMode } }}",
+                jsonBody: "={{ { sourceUrl: $json.sourceUrl, clipCount: $json.clipCount, clipDurationSeconds: $json.clipDurationSeconds, selectionMode: $json.selectionMode, ...($json.selectionMode === 'manual_timestamps' ? { clipStartsSeconds: $json.clipStartsSeconds } : {}) } }}",
                 options: { timeout: 600000 },
               },
               id: randomUUID(), name: workerName, type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [740, 300],

@@ -172,8 +172,11 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
   const clipSelectionControlsPass = !isClipPublishingScenario || (
     typeof clipOptionsCode === "string"
     && /selectionMode\s*:\s*["']evenly_spaced["']/.test(clipOptionsCode)
+    && clipOptionsCode.includes("manual_timestamps")
+    && clipOptionsCode.includes("clipStartsSeconds")
     && typeof clipWorkerBody === "string"
     && clipWorkerBody.includes("selectionMode")
+    && clipWorkerBody.includes("clipStartsSeconds")
   );
   const youtubeUpload = nodes.find((node) => typeof node.name === "string" && /upload youtube short/i.test(node.name));
   const youtubeUploadOptions = youtubeUpload?.parameters && typeof youtubeUpload.parameters === "object"
@@ -272,8 +275,8 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
       label: "Clip selection mode",
       passed: clipSelectionControlsPass,
       detail: clipSelectionControlsPass
-        ? "The workflow exposes evenly spaced and scene-change selection and passes the choice to the worker. Scene-change candidates use visual cuts only; they are not semantic highlights."
-        : "Regenerate this workflow to expose and pass a clip selection mode to the worker.",
+        ? "The workflow exposes evenly spaced, visual scene-change, and user-selected timestamp modes and passes selection settings to the worker. Scene-change candidates are not semantic highlights."
+        : "Regenerate this workflow to expose and pass the supported clip selection modes and manual timestamps to the worker.",
     }, {
       id: "publishing_controls",
       label: "YouTube metadata and platform choices",

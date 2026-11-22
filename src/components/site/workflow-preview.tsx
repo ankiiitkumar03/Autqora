@@ -73,7 +73,7 @@ function getPreview(project: Project): { title: string; description: string; row
       description: "Current starter workflow stages. It uses an archived public video, returns local links, and can optionally upload clips to YouTube with configurable title, description and visibility. It does not capture live streams.",
       rows: [{ label: "Current export", stages: [
         { title: "Manual run", detail: "Start from n8n", state: "included" },
-        { title: "Set clip options", detail: "Choose even spacing or visual scene-change candidates", state: "included" },
+        { title: "Set clip options", detail: "Choose even spacing, visual cuts, or user-selected timestamps", state: "included" },
         { title: "FFmpeg clip worker", detail: "Local service; API credential required", state: "setup" },
         { title: "Local MP4 links", detail: "Review clips before sharing", state: "included" },
         { title: "YouTube upload", detail: "Optional; choose private, unlisted or public; requires YouTube OAuth2", state: "setup" },

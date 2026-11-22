@@ -14,7 +14,7 @@ from uuid import uuid4
 import yt_dlp
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -36,7 +36,25 @@ class ClipRequest(BaseModel):
     sourceUrl: str = Field(min_length=12, max_length=2048)
     clipCount: int = Field(default=5, ge=1, le=10)
     clipDurationSeconds: int = Field(default=18, ge=15, le=20)
-    selectionMode: Literal["evenly_spaced", "scene_change"] = "evenly_spaced"
+    selectionMode: Literal["evenly_spaced", "scene_change", "manual_timestamps"] = "evenly_spaced"
+    clipStartsSeconds: list[int] | None = Field(default=None, max_length=10)
+
+    @model_validator(mode="after")
+    def validate_manual_timestamps(self):
+        starts = self.clipStartsSeconds
+        if self.selectionMode != "manual_timestamps":
+            if starts is not None:
+                raise ValueError("clipStartsSeconds is only allowed with manual_timestamps selection mode.")
+            return self
+        if starts is None or len(starts) != self.clipCount:
+            raise ValueError("Provide one clip start timestamp for each requested clip.")
+        if any(start < 0 for start in starts):
+            raise ValueError("Clip start timestamps must be zero or greater.")
+        if starts != sorted(starts):
+            raise ValueError("Clip start timestamps must be in ascending order.")
+        if any(later - earlier < self.clipDurationSeconds for earlier, later in zip(starts, starts[1:])):
+            raise ValueError("Manual clip timestamps must not overlap; leave at least the clip duration between starts.")
+        return self
 
 
 def require_api_key(authorization: str | None) -> None:
@@ -228,6 +246,8 @@ def create_clip_job(payload: ClipRequest):
                         raise HTTPException(status_code=422, detail="The source video is shorter than the requested clip duration.")
                     if duration < payload.clipDurationSeconds * payload.clipCount:
                         raise HTTPException(status_code=422, detail="This source is too short for the requested number of non-overlapping clips. Reduce clipCount or clipDurationSeconds.")
+                    if payload.selectionMode == "manual_timestamps" and any(start + payload.clipDurationSeconds > duration for start in payload.clipStartsSeconds or []):
+                        raise HTTPException(status_code=422, detail="A manual clip timestamp extends beyond the end of the source video.")
                     info = downloader.extract_info(source_url, download=True)
                     downloaded = Path(downloader.prepare_filename(info))
                     if not downloaded.exists():
@@ -242,7 +262,9 @@ def create_clip_job(payload: ClipRequest):
                 if not candidates:
                     raise HTTPException(status_code=422, detail="The video downloader did not produce a media file.")
                 downloaded = candidates[0]
-            if payload.selectionMode == "scene_change":
+            if payload.selectionMode == "manual_timestamps":
+                clip_starts = [(start, "user_selected_timestamp") for start in payload.clipStartsSeconds or []]
+            elif payload.selectionMode == "scene_change":
                 scene_changes = detect_scene_change_scores(downloaded)
                 clip_starts = choose_scene_change_clip_starts(
                     duration, payload.clipDurationSeconds, payload.clipCount, scene_changes,
