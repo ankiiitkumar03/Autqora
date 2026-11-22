@@ -286,6 +286,7 @@ def create_clip_job(payload: ClipRequest):
                 ])
                 output.append({
                     "fileName": filename,
+                    "startSeconds": start,
                     "durationSeconds": payload.clipDurationSeconds,
                     "selectionMode": payload.selectionMode,
                     "selectionBasis": selection_basis,

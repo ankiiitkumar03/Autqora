@@ -9,7 +9,7 @@ This local service downloads a completed, archived, public YouTube video that yo
 3. Confirm the worker responds at `http://localhost:8090/health` and check `docker compose ps` for a `healthy` state. The endpoint and Compose healthcheck verify that FFmpeg runs and the worker API key is configured; neither check contacts YouTube or tests a clip job.
 4. In n8n, create a **Header Auth** credential named `AUTQORA Clip Worker`, with header name `Authorization` and value `Bearer <the key from .env>`. On Windows, read the local value in PowerShell with `Get-Content .env`; keep it private and do not put it in AUTQORA project fields.
 5. Import the AUTQORA workflow and select that credential on **Create vertical clips with FFmpeg**.
-6. In **Set clip options**, set a YouTube video URL, clip count (1–10), duration (15–20 seconds), and selection mode. For `manual_timestamps`, also provide one ascending, non-overlapping start time in seconds per clip; each selected segment must fit within the source. Run manually; the final node returns local download links and the selection basis for each clip.
+6. In **Set clip options**, set a YouTube video URL, clip count (1–10), duration (15–20 seconds), and selection mode. For `manual_timestamps`, also provide one ascending, non-overlapping start time in seconds per clip; each selected segment must fit within the source. Run manually; the final node returns local download links, each clip's start time, and the selection basis.
 
 The n8n container reaches this Windows host through `host.docker.internal`. If that address is unavailable in your n8n container, it must be attached to a Docker network that can reach the host service. Keep the worker port local and never expose it to the public internet.
 

@@ -159,6 +159,10 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
   const clipWorkerBody = clipWorker?.parameters && typeof clipWorker.parameters === "object"
     ? (clipWorker.parameters as Record<string, unknown>).jsonBody
     : null;
+  const clipOutput = nodes.find((node) => node.name === "Return clip download links");
+  const clipOutputCode = clipOutput?.parameters && typeof clipOutput.parameters === "object"
+    ? (clipOutput.parameters as Record<string, unknown>).jsCode
+    : null;
   const clipOutputName = "Return clip download links";
   const downloadGateName = "Only download clips when a platform is opted in";
   const downloadName = "Download clip for publishing";
@@ -177,6 +181,8 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
     && typeof clipWorkerBody === "string"
     && clipWorkerBody.includes("selectionMode")
     && clipWorkerBody.includes("clipStartsSeconds")
+    && typeof clipOutputCode === "string"
+    && /startSeconds\s*:\s*clip\.startSeconds/.test(clipOutputCode)
   );
   const youtubeUpload = nodes.find((node) => typeof node.name === "string" && /upload youtube short/i.test(node.name));
   const youtubeUploadOptions = youtubeUpload?.parameters && typeof youtubeUpload.parameters === "object"
