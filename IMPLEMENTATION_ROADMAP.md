@@ -6,7 +6,7 @@ The project page also presents a consolidated timeline assembled from saved mile
 
 Project debugging now persists per-recommendation outcomes (tried, resolved, still failing, or not applicable) with optional secret-redacted notes. Users can use that history to inform a later AI diagnosis; the outcomes remain user-reported and are not treated as independent proof that a fix worked. Backup/import and the activity timeline preserve the feedback.
 
-The project debugger also accepts a bounded PNG/JPEG/WebP screenshot. It is analyzed in memory only through the explicit **Ask AI** action, is not saved with the report, and requires the configured vision-capable model. Local rule analysis continues to ignore the image.
+The project debugger accepts bounded PNG/JPEG/WebP screenshots and bounded UTF-8 log/code excerpts. Screenshots are sent in memory only through the explicit **Ask AI** action; text excerpts inform local matching and are also sent only after **Ask AI**. Neither source attachment is saved with the report. Screenshots require the configured vision-capable model; workflow JSON remains a separate local structural review.
 
 Generic projects can now request an optional AI-generated inactive n8n draft. The candidate is checked locally and stays unsaved until the user confirms it. Provider quality, instance-specific node compatibility, credentials, and execution remain unverified; treat this as a draft generator, not a live integration.
 

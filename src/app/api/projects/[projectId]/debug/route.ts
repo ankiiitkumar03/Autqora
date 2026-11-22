@@ -14,6 +14,7 @@ const schema = z.object({
   error: z.string().trim().min(5).max(8_000),
   expected: z.string().trim().max(1_000).optional().default(""),
   workflowJson: z.string().max(24_000).optional().default(""),
+  additionalContextText: z.string().max(32_000).optional().default(""),
   screenshot: z.object({
     mediaType: z.enum(["image/png", "image/jpeg", "image/webp"]),
     dataUrl: z.string().max(2_800_000),
@@ -85,7 +86,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
     return Response.json({ error: "Send valid JSON with a sanitized error message." }, { status: 400, headers });
   }
   const parsed = schema.safeParse(body);
-  if (!parsed.success) return Response.json({ error: "Choose a platform, provide an error message between 5 and 8,000 characters, keep workflow JSON under 24 KB, and attach only a PNG, JPEG, or WebP screenshot under 2 MB." }, { status: 400, headers });
+  if (!parsed.success) return Response.json({ error: "Choose a platform, provide an error message between 5 and 8,000 characters, keep workflow JSON under 24 KB and text attachments under 32 KB, and attach only a PNG, JPEG, or WebP screenshot under 2 MB." }, { status: 400, headers });
   if (parsed.data.workflowJson.trim() && parsed.data.platform !== "n8n") return Response.json({ error: "Workflow JSON review is currently available for n8n projects." }, { status: 400, headers });
   const decodedScreenshot = parsed.data.screenshot ? decodeScreenshot(parsed.data.screenshot.dataUrl, parsed.data.screenshot.mediaType) : undefined;
   if (parsed.data.screenshot && decodedScreenshot === null) return Response.json({ error: "The screenshot could not be validated. Use a PNG, JPEG, or WebP image under 2 MB." }, { status: 400, headers });
@@ -93,6 +94,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
 
   const error = redactSecrets(parsed.data.error);
   const expected = redactSecrets(parsed.data.expected);
+  const additionalContextText = redactSecrets(parsed.data.additionalContextText)
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .slice(0, 32_000);
   const priorUserReportedFeedback = listProjectDebugReports(workspaceId, projectId)
     .flatMap((report) => report.stepFeedback
       .filter((feedback) => feedback.status !== "not_started")
@@ -106,7 +110,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       })))
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
     .slice(0, 12);
-  let diagnosis = diagnoseWorkflowError(parsed.data.platform, error, expected);
+  const diagnosticInput = additionalContextText ? `${error}\n\nAttached log or code excerpt:\n${additionalContextText}` : error;
+  let diagnosis = diagnoseWorkflowError(parsed.data.platform, diagnosticInput, expected);
+  if (additionalContextText) diagnosis.textAttachmentAnalyzed = true;
   let workflowJson: unknown;
   if (parsed.data.workflowJson.trim()) {
     try {
@@ -147,6 +153,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
         platform: parsed.data.platform,
         error,
         expected,
+        additionalContextText,
         workflowReview: review,
         projectContext: context,
         priorUserReportedFeedback,
@@ -154,6 +161,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
         savedRuleDiagnosis: { category: diagnosis.category, summary: diagnosis.summary, explanation: diagnosis.explanation, steps: diagnosis.steps, evidence: diagnosis.evidence },
       });
       if (screenshot) diagnosis.screenshotAnalyzed = true;
+      if (additionalContextText) diagnosis.textAttachmentAnalyzed = true;
       if (review) diagnosis.workflowReview = review;
       if (context) diagnosis.projectContext = context;
     } catch (aiError) {

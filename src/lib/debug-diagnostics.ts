@@ -10,6 +10,7 @@ export type DebugDiagnosis = {
   evidence: string;
   note: string;
   screenshotAnalyzed?: boolean;
+  textAttachmentAnalyzed?: boolean;
   workflowReview?: import("@/lib/project-workflow").WorkflowDebugReview;
   projectContext?: {
     workflowVersion: number;
@@ -165,14 +166,14 @@ export function diagnoseWorkflowError(platform: DebugPlatform, error: string, ex
     return {
       category: "More context needed",
       summary: "I couldn’t match this error to a known pattern yet.",
-      explanation: `This first version checks common error patterns for ${platform}. It does not inspect your workflow file or call the platform API.`,
+      explanation: `This first version checks common error patterns for ${platform}. It does not structurally inspect workflow files or call the platform API.`,
       steps: [
         "Find the first failing step and copy its exact error code and message.",
         "Compare that step’s input and output with a successful run, if available.",
         "Check for a recent change to credentials, field mappings, or the endpoint.",
       ],
       evidence: "Add the failing step name, status code, and a short sanitized input/output example to get a more specific match.",
-      note: expected.trim() ? `Expected result: ${expected.trim().slice(0, 240)}` : "No workflow file was uploaded or stored.",
+      note: expected.trim() ? `Expected result: ${expected.trim().slice(0, 240)}` : "Paste sanitized workflow JSON for a structural review, or attach a short log/code excerpt as extra context.",
     };
   }
 

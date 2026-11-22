@@ -58,6 +58,7 @@ const debugDiagnosisSchema = z.object({
   evidence: z.string().max(2_000),
   note: z.string().max(2_000),
   screenshotAnalyzed: z.boolean().optional(),
+  textAttachmentAnalyzed: z.boolean().optional(),
   workflowReview: z.object({
     nodeCount: z.number().int().nonnegative().max(500),
     issues: z.array(z.string().max(1_000)).max(30),

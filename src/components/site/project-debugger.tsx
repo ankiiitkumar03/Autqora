@@ -7,6 +7,7 @@ import type { ProjectDebugReport } from "@/lib/project-domain";
 
 type ResponseData = { reports?: ProjectDebugReport[]; report?: ProjectDebugReport; error?: string };
 type DebugScreenshot = { name: string; mediaType: "image/png" | "image/jpeg" | "image/webp"; dataUrl: string };
+type DebugTextAttachment = { name: string; text: string };
 
 export function ProjectDebugger({ projectId, initialPlatform }: { projectId: string; initialPlatform: string | null }) {
   const [platform, setPlatform] = useState<DebugPlatform>(debugPlatforms.includes(initialPlatform as DebugPlatform) ? initialPlatform as DebugPlatform : "n8n");
@@ -21,6 +22,10 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
   const [feedbackDrafts, setFeedbackDrafts] = useState<Record<string, { status: string; note: string }>>({});
   const [screenshot, setScreenshot] = useState<DebugScreenshot | null>(null);
   const [screenshotError, setScreenshotError] = useState("");
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
+  const [textAttachment, setTextAttachment] = useState<DebugTextAttachment | null>(null);
+  const [textAttachmentError, setTextAttachmentError] = useState("");
+  const [textAttachmentLoading, setTextAttachmentLoading] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -46,6 +51,7 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
           error: errorText,
           expected,
           workflowJson,
+          additionalContextText: textAttachment?.text ?? "",
           ...(mode === "ai" && screenshot ? { screenshot: { mediaType: screenshot.mediaType, dataUrl: screenshot.dataUrl } } : {}),
         }),
       });
@@ -64,6 +70,7 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
     setScreenshotError("");
     if (!file) return;
     setScreenshot(null);
+    setScreenshotLoading(false);
     if (file.size > 2 * 1024 * 1024) {
       setScreenshot(null);
       setScreenshotError("Choose a screenshot smaller than 2 MB.");
@@ -80,12 +87,49 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
       return;
     }
     const reader = new FileReader();
+    setScreenshotLoading(true);
     reader.onload = () => {
       if (typeof reader.result === "string") setScreenshot({ name: file.name, mediaType, dataUrl: reader.result });
       else setScreenshotError("Could not read that screenshot.");
+      setScreenshotLoading(false);
     };
-    reader.onerror = () => setScreenshotError("Could not read that screenshot.");
+    reader.onerror = () => { setScreenshotError("Could not read that screenshot."); setScreenshotLoading(false); };
     reader.readAsDataURL(file);
+  }
+
+  function loadTextAttachment(file: File | undefined) {
+    setTextAttachmentError("");
+    if (!file) return;
+    setTextAttachment(null);
+    setTextAttachmentLoading(false);
+    if (file.size > 32 * 1024) {
+      setTextAttachmentError("Choose a text file smaller than 32 KB.");
+      return;
+    }
+    const allowedExtensions = new Set(["txt", "log", "json", "py", "js", "ts", "yaml", "yml", "md"]);
+    const extension = file.name.toLowerCase().split(".").pop() ?? "";
+    if (!allowedExtensions.has(extension)) {
+      setTextAttachmentError("Use a .txt, .log, .json, .py, .js, .ts, .yaml, .yml, or .md file.");
+      return;
+    }
+    const reader = new FileReader();
+    setTextAttachmentLoading(true);
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setTextAttachmentError("Could not read that text file.");
+        setTextAttachmentLoading(false);
+        return;
+      }
+      if (reader.result.length > 32_000) {
+        setTextAttachmentError("Keep the excerpt under 32 KB of text.");
+        setTextAttachmentLoading(false);
+        return;
+      }
+      setTextAttachment({ name: file.name, text: reader.result });
+      setTextAttachmentLoading(false);
+    };
+    reader.onerror = () => { setTextAttachmentError("Could not read that text file."); setTextAttachmentLoading(false); };
+    reader.readAsText(file);
   }
 
   async function saveStepFeedback(reportId: string, stepIndex: number, savedStatus: string, savedNote: string) {
@@ -125,21 +169,31 @@ export function ProjectDebugger({ projectId, initialPlatform }: { projectId: str
         <div><label htmlFor="debug-expected" className="block text-sm font-medium text-white/80">What did you expect? <span className="font-normal text-white/45">Optional</span></label><textarea id="debug-expected" maxLength={1000} rows={2} value={expected} onChange={(event) => setExpected(event.target.value)} className={textareaClass} /></div>
         <div><label htmlFor="debug-workflow-json" className="block text-sm font-medium text-white/80">Workflow JSON <span className="font-normal text-white/45">Optional · max 24 KB</span></label><textarea id="debug-workflow-json" maxLength={24000} rows={5} value={workflowJson} onChange={(event) => setWorkflowJson(event.target.value)} placeholder="Paste the n8n workflow JSON to check its structure, references, placeholders, and credential setup." className={textareaClass} /><p className="mt-1 text-xs leading-relaxed text-white/45">AUTQORA analyzes this in memory and saves only the diagnosis summary. Remove credentials, personal data, and private URLs before pasting.</p></div>
         <div>
+          <label htmlFor="debug-text-attachment" className="block text-sm font-medium text-white/80">Log or code excerpt <span className="font-normal text-white/45">Optional · max 32 KB</span></label>
+          <input id="debug-text-attachment" type="file" disabled={textAttachmentLoading} accept=".txt,.log,.json,.py,.js,.ts,.yaml,.yml,.md,text/plain,application/json" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; loadTextAttachment(file); }} className="mt-2 block w-full text-xs text-white/65 file:mr-3 file:rounded-full file:border-0 file:bg-white/[0.08] file:px-3 file:py-2 file:text-xs file:text-white/80 hover:file:bg-white/[0.12]" />
+          <p className="mt-1 text-xs leading-relaxed text-white/45">Used by local pattern matching. Sent to OpenAI only when you click Ask AI; not saved with the report. Remove personal details and credentials first. Use the workflow JSON box above for n8n structure checks.</p>
+          {textAttachment && <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-white/[0.08] px-3 py-2"><span className="truncate text-xs text-white/65">Attached excerpt: {textAttachment.name}</span><button type="button" onClick={() => { setTextAttachment(null); setTextAttachmentError(""); }} className="shrink-0 text-xs text-violet-soft underline underline-offset-2">Remove</button></div>}
+          {textAttachmentLoading && <p role="status" className="mt-2 text-xs text-white/45">Reading text file…</p>}
+          {textAttachmentError && <p role="alert" className="mt-2 text-xs text-[#f58ba0]">{textAttachmentError}</p>}
+        </div>
+        <div>
           <label htmlFor="debug-screenshot" className="block text-sm font-medium text-white/80">Screenshot <span className="font-normal text-white/45">Optional · AI analysis only · max 2 MB</span></label>
-          <input id="debug-screenshot" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; loadScreenshot(file); }} className="mt-2 block w-full text-xs text-white/65 file:mr-3 file:rounded-full file:border-0 file:bg-white/[0.08] file:px-3 file:py-2 file:text-xs file:text-white/80 hover:file:bg-white/[0.12]" />
+          <input id="debug-screenshot" type="file" disabled={screenshotLoading} accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; loadScreenshot(file); }} className="mt-2 block w-full text-xs text-white/65 file:mr-3 file:rounded-full file:border-0 file:bg-white/[0.08] file:px-3 file:py-2 file:text-xs file:text-white/80 hover:file:bg-white/[0.12]" />
           <p className="mt-1 text-xs leading-relaxed text-white/45">The screenshot is sent to OpenAI only when you click Ask AI and is not saved in the project. Local analysis ignores it. Remove passwords, tokens, account details, and personal information before attaching.</p>
           {screenshot && <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-white/[0.08] px-3 py-2"><span className="truncate text-xs text-white/65">Attached for AI analysis: {screenshot.name}</span><button type="button" onClick={() => { setScreenshot(null); setScreenshotError(""); }} className="shrink-0 text-xs text-violet-soft underline underline-offset-2">Remove</button></div>}
+          {screenshotLoading && <p role="status" className="mt-2 text-xs text-white/45">Reading screenshot…</p>}
           {screenshotError && <p role="alert" className="mt-2 text-xs text-[#f58ba0]">{screenshotError}</p>}
         </div>
         {error && <p role="alert" className="text-sm text-[#f58ba0]">{error}</p>}
-        <div className="flex flex-wrap gap-2"><button type="submit" disabled={busy || errorText.trim().length < 5} className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-mist px-5 text-sm font-medium text-ink hover:bg-white disabled:opacity-50">{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SearchCheck className="h-4 w-4" />}{busy ? "Analyzing" : "Analyze locally and save"}</button><button type="button" onClick={() => void diagnose("ai")} disabled={busy || errorText.trim().length < 5} className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-violet-soft/35 px-4 text-sm text-white/80 hover:bg-violet/[0.1] disabled:opacity-50">{busy ? "Analyzing" : "Ask AI"}</button></div>
-        <p className="text-xs leading-relaxed text-white/45">AI analysis sends the redacted error, expected outcome, saved project evidence, and recent user-reported step outcomes and notes to OpenAI only when you click Ask AI. Pasted workflow JSON is reviewed locally; only its structural summary may be sent. Remove personal data and credentials from error text and notes.</p>
+        <div className="flex flex-wrap gap-2"><button type="submit" disabled={busy || screenshotLoading || textAttachmentLoading || errorText.trim().length < 5} className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-mist px-5 text-sm font-medium text-ink hover:bg-white disabled:opacity-50">{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SearchCheck className="h-4 w-4" />}{busy ? "Analyzing" : "Analyze locally and save"}</button><button type="button" onClick={() => void diagnose("ai")} disabled={busy || screenshotLoading || textAttachmentLoading || errorText.trim().length < 5} className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-violet-soft/35 px-4 text-sm text-white/80 hover:bg-violet/[0.1] disabled:opacity-50">{busy ? "Analyzing" : "Ask AI"}</button></div>
+        <p className="text-xs leading-relaxed text-white/45">Clicking Ask AI sends the redacted error and expected outcome, selected screenshot/text attachment, saved project evidence, and recent user-reported outcomes to OpenAI. Pasted workflow JSON is reviewed locally; only its structural summary may be sent. Remove credentials and personal data from all evidence.</p>
       </form>
       {latest && latestReport && <article className="mt-6 rounded-xl border border-violet-soft/20 bg-violet/[0.04] p-4">
         <p className="text-xs font-medium uppercase tracking-wide text-violet-soft">{latest.category}</p>
         <h3 className="mt-2 text-base font-semibold text-white">{latest.summary}</h3>
         <p className="mt-2 text-sm leading-relaxed text-white/65">{latest.explanation}</p>
         {latest.screenshotAnalyzed && <p className="mt-2 text-xs text-white/45">AI analyzed the attached screenshot. The original image was not saved with this report.</p>}
+        {latest.textAttachmentAnalyzed && <p className="mt-2 text-xs text-white/45">The attached log/code excerpt was used for this diagnosis. Its text was not saved with this report.</p>}
         <ol className="mt-4 space-y-3 pl-5 text-sm leading-relaxed text-white/70">
           {latest.steps.map((step, index) => {
             const saved = latestReport.stepFeedback.find((item) => item.stepIndex === index);
