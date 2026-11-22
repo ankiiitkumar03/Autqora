@@ -49,7 +49,7 @@ function getPreview(project: Project): { title: string; description: string; row
           label: "Available in the current export",
           stages: [
             { title: "Manual run", detail: "Start from your n8n instance", state: "included" },
-            { title: "Archived YouTube video", detail: "Public URL you own or may process", state: "included" },
+            { title: "Archived YouTube video", detail: "Owned or authorized; live URLs wait for replay", state: "included" },
             { title: "FFmpeg clip worker", detail: "Creates portrait 15–20 second clips", state: "setup" },
             { title: "Local MP4 links", detail: "Review and download the generated clips", state: "included" },
             { title: "YouTube upload", detail: "Optional; choose title, description and private/unlisted/public visibility", state: "setup" },
@@ -73,7 +73,7 @@ function getPreview(project: Project): { title: string; description: string; row
       description: "Current starter workflow stages. It uses an archived public video, returns local links, and can optionally upload clips to YouTube with configurable title, description and visibility. It does not capture live streams.",
       rows: [{ label: "Current export", stages: [
         { title: "Manual run", detail: "Start from n8n", state: "included" },
-        { title: "Set clip options", detail: "Video URL, count, and 15–20 second duration", state: "included" },
+        { title: "Set clip options", detail: "Choose even spacing or visual scene-change candidates", state: "included" },
         { title: "FFmpeg clip worker", detail: "Local service; API credential required", state: "setup" },
         { title: "Local MP4 links", detail: "Review clips before sharing", state: "included" },
         { title: "YouTube upload", detail: "Optional; choose private, unlisted or public; requires YouTube OAuth2", state: "setup" },

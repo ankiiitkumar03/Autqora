@@ -147,6 +147,16 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
   const clipOptionsCode = clipOptions?.parameters && typeof clipOptions.parameters === "object"
     ? (clipOptions.parameters as Record<string, unknown>).jsCode
     : null;
+  const clipWorker = nodes.find((node) => node.name === "Create vertical clips with FFmpeg");
+  const clipWorkerBody = clipWorker?.parameters && typeof clipWorker.parameters === "object"
+    ? (clipWorker.parameters as Record<string, unknown>).jsonBody
+    : null;
+  const clipSelectionControlsPass = !isClipPublishingScenario || (
+    typeof clipOptionsCode === "string"
+    && /selectionMode\s*:\s*["']evenly_spaced["']/.test(clipOptionsCode)
+    && typeof clipWorkerBody === "string"
+    && clipWorkerBody.includes("selectionMode")
+  );
   const youtubeUpload = nodes.find((node) => typeof node.name === "string" && /upload youtube short/i.test(node.name));
   const youtubeUploadOptions = youtubeUpload?.parameters && typeof youtubeUpload.parameters === "object"
     ? (youtubeUpload.parameters as Record<string, unknown>).options
@@ -185,7 +195,7 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
         ? names.some((name) => /when clicking.*execute workflow/i.test(name)) && names.some((name) => /autqora implementation draft/i.test(name))
         : false;
   const status = structuralPass && placeholdersPass && webhookAuthConfigured && credentialConfigured
-    && scenarioPass && clipPublishingControlsPass ? "ready_for_manual_test" as const
+    && scenarioPass && clipPublishingControlsPass && clipSelectionControlsPass ? "ready_for_manual_test" as const
     : "needs_setup" as const;
   const checks = [
     {
@@ -224,6 +234,13 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
         : "No implemented scenario-specific workflow was detected; this export is a generic scaffold.",
     },
     ...(isClipPublishingScenario ? [{
+      id: "clip_selection",
+      label: "Clip selection mode",
+      passed: clipSelectionControlsPass,
+      detail: clipSelectionControlsPass
+        ? "The workflow exposes evenly spaced and scene-change selection and passes the choice to the worker. Scene-change candidates use visual cuts only; they are not semantic highlights."
+        : "Regenerate this workflow to expose and pass a clip selection mode to the worker.",
+    }, {
       id: "publishing_controls",
       label: "YouTube metadata and platform choices",
       passed: clipPublishingControlsPass,

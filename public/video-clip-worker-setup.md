@@ -1,6 +1,6 @@
 # AUTQORA YouTube video to shorts worker
 
-This local service processes a completed, archived, public YouTube video that you own or are authorized to process. It creates up to ten evenly spaced vertical MP4 clips, each 15–20 seconds. Upcoming and active live stream URLs are rejected before download; use the completed replay after it becomes available. It does not capture live streams. The n8n workflow has separate YouTube and Instagram upload branches; both are opt-in, require provider credentials, and can create real posts when enabled.
+This local service processes a completed, archived, public YouTube video that you own or are authorized to process. It creates up to ten non-overlapping vertical MP4 clips, each 15–20 seconds. Choose `evenly_spaced` or `scene_change`; scene-change mode uses visual cuts only and does not identify semantic highlights or speech. Upcoming and active live stream URLs are rejected before download; use the completed replay after it becomes available. It does not capture live streams. The n8n workflow has separate YouTube and Instagram upload branches; both are opt-in, require provider credentials, and can create real posts when enabled.
 
 ## Start with Docker Desktop
 
@@ -10,7 +10,7 @@ This local service processes a completed, archived, public YouTube video that yo
 4. Confirm `http://localhost:8090/health` returns `ok: true`.
 5. In n8n, create a **Header Auth** credential named `AUTQORA Clip Worker`. Set the header name to `Authorization` and value to `Bearer <the key from .env>`. Run `Get-Content .env` in this folder to read the local value; keep it private and do not paste it into AUTQORA.
 6. Import the workflow and select that credential on **Create vertical clips with FFmpeg**.
-7. In **Set clip options**, set a YouTube video URL, clip count (1–10), and duration (15–20 seconds). Run manually and review the returned links.
+7. In **Set clip options**, set a YouTube video URL, clip count (1–10), duration (15–20 seconds), and selection mode (`evenly_spaced` or `scene_change`). The selected clips must fit within the source duration without overlapping. Run manually and review the returned links and each clip's selection basis.
 
 The n8n Docker container reaches the host through `host.docker.internal`. If this address is unavailable in your n8n container, connect its Docker network to the host service. Keep port 8090 local and do not expose it to the public internet.
 

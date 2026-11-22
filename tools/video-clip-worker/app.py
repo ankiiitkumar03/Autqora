@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -35,6 +36,7 @@ class ClipRequest(BaseModel):
     sourceUrl: str = Field(min_length=12, max_length=2048)
     clipCount: int = Field(default=5, ge=1, le=10)
     clipDurationSeconds: int = Field(default=18, ge=15, le=20)
+    selectionMode: Literal["evenly_spaced", "scene_change"] = "evenly_spaced"
 
 
 def require_api_key(authorization: str | None) -> None:
@@ -67,6 +69,78 @@ def run_command(arguments: list[str]) -> str:
         raise HTTPException(status_code=504, detail="Video inspection timed out.") from exc
     except subprocess.CalledProcessError as exc:
         raise HTTPException(status_code=422, detail="Could not inspect the downloaded video.") from exc
+
+
+def evenly_spaced_clip_starts(duration: int, clip_duration: int, clip_count: int) -> list[float]:
+    latest_start = max(0, duration - clip_duration)
+    if clip_count == 1:
+        return [round(latest_start / 2, 3)]
+    return [round(latest_start * index / (clip_count - 1), 3) for index in range(clip_count)]
+
+
+def detect_scene_change_scores(video_path: Path) -> list[tuple[float, float]]:
+    """Return sampled FFmpeg scene-change timestamps and scores for reviewable clip candidates."""
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(video_path),
+                "-vf", "scale=160:-2,fps=1,select='gt(scene,0.30)',metadata=print:key=lavfi.scene_score:file=-",
+                "-an", "-f", "null", "-",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="FFmpeg is missing in the clip worker image.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="Scene-change analysis exceeded its ten-minute limit. Retry with evenly spaced clips or a shorter source video.") from exc
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail="Could not analyze visual scene changes in this video.") from exc
+
+    candidates: list[tuple[float, float]] = []
+    for block in result.stdout.split("frame:")[1:]:
+        timestamp_match = re.search(r"pts_time:([-+]?(?:\d+(?:\.\d*)?|\.\d+))", block)
+        score_match = re.search(r"lavfi\.scene_score=([-+]?(?:\d+(?:\.\d*)?|\.\d+))", block)
+        if not timestamp_match or not score_match:
+            continue
+        timestamp = float(timestamp_match.group(1))
+        score = float(score_match.group(1))
+        if timestamp >= 0 and 0.30 <= score <= 1:
+            candidates.append((timestamp, score))
+    return candidates
+
+
+def choose_scene_change_clip_starts(
+    duration: int,
+    clip_duration: int,
+    clip_count: int,
+    scene_changes: list[tuple[float, float]],
+) -> list[tuple[float, str]]:
+    """Center clips on strong visual cuts while keeping a full, non-overlapping fallback set."""
+    latest_start = max(0, duration - clip_duration)
+    selected = [
+        {"start": start, "basis": "evenly_spaced_fallback"}
+        for start in evenly_spaced_clip_starts(duration, clip_duration, clip_count)
+    ]
+    ranked_changes = sorted(scene_changes, key=lambda candidate: candidate[1], reverse=True)
+    for timestamp, _score in ranked_changes:
+        candidate = round(min(latest_start, max(0.0, timestamp - clip_duration / 2)), 3)
+        eligible_slots = []
+        for slot_index, slot in enumerate(selected):
+            other_starts = [other["start"] for index, other in enumerate(selected) if index != slot_index]
+            if all(abs(candidate - other_start) >= clip_duration for other_start in other_starts):
+                eligible_slots.append((abs(candidate - slot["start"]), slot_index))
+        if eligible_slots:
+            _distance, slot_index = min(eligible_slots)
+            selected[slot_index] = {"start": candidate, "basis": "visual_scene_change"}
+        if all(slot["basis"] == "visual_scene_change" for slot in selected):
+            break
+    return sorted(
+        [(round(slot["start"], 3), slot["basis"]) for slot in selected],
+        key=lambda clip: clip[0],
+    )
 
 
 def remove_expired_clip_jobs(now: float | None = None) -> None:
@@ -136,6 +210,8 @@ def create_clip_job(payload: ClipRequest):
                         raise HTTPException(status_code=413, detail="Source videos are limited to four hours.")
                     if duration < payload.clipDurationSeconds:
                         raise HTTPException(status_code=422, detail="The source video is shorter than the requested clip duration.")
+                    if duration < payload.clipDurationSeconds * payload.clipCount:
+                        raise HTTPException(status_code=422, detail="This source is too short for the requested number of non-overlapping clips. Reduce clipCount or clipDurationSeconds.")
                     info = downloader.extract_info(source_url, download=True)
                     downloaded = Path(downloader.prepare_filename(info))
                     if not downloaded.exists():
@@ -150,9 +226,17 @@ def create_clip_job(payload: ClipRequest):
                 if not candidates:
                     raise HTTPException(status_code=422, detail="The video downloader did not produce a media file.")
                 downloaded = candidates[0]
-            latest_start = duration - payload.clipDurationSeconds
-            starts = [round(latest_start * index / max(payload.clipCount - 1, 1)) for index in range(payload.clipCount)]
-            for index, start in enumerate(starts, start=1):
+            if payload.selectionMode == "scene_change":
+                scene_changes = detect_scene_change_scores(downloaded)
+                clip_starts = choose_scene_change_clip_starts(
+                    duration, payload.clipDurationSeconds, payload.clipCount, scene_changes,
+                )
+            else:
+                clip_starts = [
+                    (start, "evenly_spaced")
+                    for start in evenly_spaced_clip_starts(duration, payload.clipDurationSeconds, payload.clipCount)
+                ]
+            for index, (start, selection_basis) in enumerate(clip_starts, start=1):
                 filename = f"clip-{index:02d}.mp4"
                 target = job_dir / filename
                 run_command([
@@ -165,6 +249,8 @@ def create_clip_job(payload: ClipRequest):
                 output.append({
                     "fileName": filename,
                     "durationSeconds": payload.clipDurationSeconds,
+                    "selectionMode": payload.selectionMode,
+                    "selectionBasis": selection_basis,
                     "downloadUrl": f"{PUBLIC_BASE_URL}/clips/{job_dir.name}/{filename}",
                 })
         return {"clips": output}

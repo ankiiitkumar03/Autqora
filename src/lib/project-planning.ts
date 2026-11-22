@@ -9,7 +9,7 @@ export function identifyOpenProjectQuestions(project: Project) {
   if (scenario.isClipPublishingPipeline) {
     questions.push("Is this your own YouTube live stream or a source you have permission to capture and republish?");
     questions.push("Should AUTQORA capture while the stream is live, process the saved replay afterward, or support both?");
-    questions.push("How should it choose 15–20 second clips: fixed intervals, speech/highlight detection, or your manual selection?");
+    questions.push("How should it choose 15–20 second clips: evenly spaced, visual scene changes, speech/highlight detection, or manual timestamps?");
     questions.push("Should every candidate publish automatically, or should you review and approve each clip first?");
     questions.push("What title/caption rules, posting schedule, and initial privacy setting should each platform use?");
     questions.push("The export includes opt-in YouTube and Instagram publisher branches. Which test accounts can you connect through n8n Credentials when you are ready to import-test them?");
@@ -51,7 +51,7 @@ export function draftProjectPlan(project: Project): ProjectPlanInput {
       implementationSteps: [
         "Current AUTQORA coverage is partial: the export handles an authorized archived video, creates local 9:16 clips, and includes opt-in YouTube and Instagram Reels upload branches. YouTube title, description, and privacy are configurable; live capture, highlight selection, and an in-workflow review step are still missing.",
         "Confirm source authorization and decide whether to process the live feed continuously, the saved replay afterward, or both. Keep the first test to a replay you own or are authorized to use.",
-        "Choose how candidate segments are selected (fixed intervals, speech/highlight detection, or manual timestamps), plus duplicate handling and the 15–20 second duration rule.",
+        "Choose how candidate segments are selected (even spacing, visual scene changes, speech/highlight detection, or manual timestamps), plus duplicate handling and the 15–20 second duration rule. Current scene-change mode detects visual cuts only, not meaningful moments.",
         "Import and test the current upload branches with n8n credentials: YouTube OAuth2, plus Meta Graph Header Auth and Meta resumable-upload Header Auth. Both platform switches default off; YouTube visibility defaults to private and can be set to unlisted or public.",
         "Add an in-workflow review gate and durable state for every candidate clip before turning on scheduled or automatic posting. Do not expose the local clip worker publicly.",
         "Record each source, clip, platform response, retry, and approval outcome so failed posts can be retried without duplicating successful posts.",
@@ -72,11 +72,11 @@ export function draftProjectPlan(project: Project): ProjectPlanInput {
       implementationSteps: [
         "Start the local AUTQORA FFmpeg worker with Docker Compose and keep its API key in a local environment file.",
         "Import the inactive n8n workflow and bind a Header Auth credential to the clip-worker request node.",
-        "Set the source video URL, clip count (1–10), and duration (15–20 seconds) in Set clip options.",
-        "Run the workflow manually; the worker samples evenly spaced segments, center-crops them to portrait 9:16, and returns local MP4 download links.",
+        "Set the source video URL, clip count (1–10 non-overlapping clips), duration (15–20 seconds), and selection mode in Set clip options.",
+        "Run the workflow manually; the worker can sample evenly spaced segments or center clips on visual scene changes, then center-crop them to portrait 9:16 and return local MP4 download links.",
         "Review every clip's framing, audio, and usage rights before sharing or publishing it. The optional YouTube branch is off by default; enable it only after review, configure YouTube OAuth2, and choose title, description, and private/unlisted/public visibility in Set clip options.",
       ],
-      assumptions: "This starter processes a public archived YouTube video that is available without sign-in and that you own or are authorized to process. The worker runs on the same Windows host as Docker Desktop and n8n reaches it at host.docker.internal:8090. It does not capture a live stream, select clips by scene or speech, or add captions. YouTube uploads are opt-in, default to private, allow private/unlisted/public visibility, and have not been runtime-tested. Keep the worker port local and configure its API key and YouTube OAuth2 in n8n Credentials.",
+      assumptions: "This starter processes a public archived YouTube video that is available without sign-in and that you own or are authorized to process. The worker runs on the same Windows host as Docker Desktop and n8n reaches it at host.docker.internal:8090. Scene-change selection uses visual cuts only; it does not detect semantic highlights, speech, or captions, and the worker does not capture live streams. YouTube uploads are opt-in, default to private, allow private/unlisted/public visibility, and have not been runtime-tested. Keep the worker port local and configure its API key and YouTube OAuth2 in n8n Credentials.",
       verificationChecks: [
         "A valid archived source produces the requested number of MP4 clips, each 15–20 seconds long.",
         "Every clip is portrait 9:16 and preserves audio when the source has audio.",
