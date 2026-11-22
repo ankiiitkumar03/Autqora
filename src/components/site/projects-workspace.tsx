@@ -16,7 +16,7 @@ const statusLabels: Record<ProjectStatus, string> = {
 
 type ProjectResponse = { project?: Project; error?: string };
 type ProjectsResponse = { projects?: Project[]; error?: string };
-type ProjectImportResponse = { project?: Project; workflowVersionsImported?: number; notRestored?: string[]; error?: string };
+type ProjectImportResponse = { project?: Project; workflowVersionsImported?: number; planRevisionsImported?: number; verificationReportsImported?: number; manualTestsImported?: number; executionSummariesImported?: number; debugReportsImported?: number; error?: string };
 
 export function ProjectsWorkspace() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -110,7 +110,7 @@ export function ProjectsWorkspace() {
       const result = (await response.json()) as ProjectImportResponse;
       if (!response.ok || !result.project) throw new Error(result.error ?? "Could not import this project backup.");
       setProjects((current) => [result.project!, ...current].slice(0, 100));
-      setImportMessage(`Imported “${result.project.name}” with ${result.workflowVersionsImported ?? 0} workflow version(s). Plan history, reports, and test evidence are not restored yet.`);
+      setImportMessage(`Imported “${result.project.name}”: ${result.workflowVersionsImported ?? 0} workflow version(s), ${result.planRevisionsImported ?? 0} plan revision(s), and ${result.verificationReportsImported ?? 0} verification report(s). Evidence and debug reports were also restored. Generate a new webhook secret if this project needs one.`);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Could not import this project backup.");
     } finally {
@@ -240,7 +240,7 @@ export function ProjectsWorkspace() {
           </div>
         </div>
 
-        <p className="mt-2 text-[10px] leading-relaxed text-white/40">Import creates a separate project and restores its brief, latest plan, checklist, and workflow versions. Historical reports and test evidence are not included yet.</p>
+        <p className="mt-2 text-[10px] leading-relaxed text-white/40">Import creates a separate project and restores its plan history, checklist, workflow versions, verification, evidence, and debug reports. Webhook secrets must be generated again.</p>
         {importMessage && <p role="status" className="mt-3 rounded-lg border border-violet-soft/20 bg-violet-soft/[0.05] px-3 py-2.5 text-[11px] leading-relaxed text-violet-soft">{importMessage}</p>}
 
         {isLoading ? (

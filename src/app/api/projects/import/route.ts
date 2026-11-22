@@ -34,8 +34,8 @@ export async function POST(request: Request) {
     if (!existingWorkspaceId) responseHeaders.set("Set-Cookie", workspaceCookie(workspaceId));
     return Response.json({
       ...result,
-      restored: ["project brief", "latest saved plan", "setup checklist", "workflow versions"],
-      notRestored: ["plan revision history", "verification reports", "manual and imported execution evidence", "debug reports"],
+      restored: ["project brief", "saved plan and revisions", "setup checklist", "workflow versions", "verification reports", "manual and imported execution summaries", "debug reports"],
+      notRestored: ["webhook secret value or hash; generate a new secret for the imported project if required"],
     }, { status: 201, headers: responseHeaders });
   } catch (error) {
     if (error instanceof ProjectLimitError) return Response.json({ error: error.message }, { status: 409, headers });

@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { projectCreateSchema, projectPlanSchema, projectSetupSchema } from "@/lib/project-domain";
+import { manualWorkflowTestEvidenceSchema, projectCreateSchema, projectPlanSchema, projectSetupSchema } from "@/lib/project-domain";
+import { n8nExecutionStatuses } from "@/lib/execution-evidence";
+import { debugPlatforms } from "@/lib/debug-diagnostics";
 
 const timestampSchema = z.string().datetime({ offset: true }).max(40);
 const planSchema = projectPlanSchema.extend({
@@ -19,6 +21,69 @@ const artifactSchema = z.object({
   }).strict(),
   workflow: z.record(z.string(), z.unknown()),
 }).strict();
+const planHistorySchema = planSchema;
+const verificationSchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  artifactId: z.string().uuid(),
+  artifactVersion: z.number().int().positive().max(10_000),
+  status: z.enum(["needs_setup", "ready_for_manual_test"]),
+  checks: z.array(z.object({ id: z.string().min(1).max(100), label: z.string().min(1).max(300), passed: z.boolean(), detail: z.string().max(2_000) }).strict()).max(100),
+  createdAt: timestampSchema,
+}).strict();
+const manualEvidenceSchema = manualWorkflowTestEvidenceSchema.extend({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  artifactId: z.string().uuid(),
+  artifactVersion: z.number().int().positive().max(10_000),
+  reportedAt: timestampSchema,
+}).strict();
+const executionEvidenceSchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  artifactId: z.string().uuid(),
+  artifactVersion: z.number().int().positive().max(10_000),
+  executionId: z.string().max(100),
+  reportedStatus: z.enum([...n8nExecutionStatuses, "unknown"]),
+  nodeNames: z.array(z.string().max(100)).max(250),
+  lastNodeExecuted: z.string().max(100).nullable(),
+  failedNodes: z.array(z.string().max(100)).max(250),
+  reportedAt: timestampSchema,
+}).strict();
+const debugDiagnosisSchema = z.object({
+  category: z.string().max(100),
+  summary: z.string().max(500),
+  explanation: z.string().max(4_000),
+  steps: z.array(z.string().max(1_000)).max(20),
+  evidence: z.string().max(2_000),
+  note: z.string().max(2_000),
+  workflowReview: z.object({
+    nodeCount: z.number().int().nonnegative().max(500),
+    issues: z.array(z.string().max(1_000)).max(30),
+    securityNotes: z.array(z.string().max(1_000)).max(30),
+  }).strict().optional(),
+  projectContext: z.object({
+    workflowVersion: z.number().int().nonnegative().max(10_000),
+    scenario: z.string().max(120),
+    localVerificationStatus: z.enum(["needs_setup", "ready_for_manual_test"]).nullable(),
+    failedLocalChecks: z.array(z.string().max(300)).max(100),
+    importedExecution: z.object({
+      reportedStatus: z.enum([...n8nExecutionStatuses, "unknown"]),
+      nodeNames: z.array(z.string().max(100)).max(250),
+      lastNodeExecuted: z.string().max(100).nullable(),
+      failedNodes: z.array(z.string().max(100)).max(250),
+    }).strict().nullable().optional(),
+  }).strict().optional(),
+}).strict();
+const debugReportSchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  platform: z.enum(debugPlatforms),
+  error: z.string().max(8_000),
+  expected: z.string().max(1_000),
+  diagnosis: debugDiagnosisSchema,
+  createdAt: timestampSchema,
+}).strict();
 
 export const projectBackupImportSchema = z.object({
   format: z.literal("autqora-project-backup"),
@@ -33,8 +98,13 @@ export const projectBackupImportSchema = z.object({
   }).passthrough(),
   plan: planSchema.nullable(),
   planFreshness: z.enum(["draft", "current", "requirements_changed", "unknown"]),
+  planHistory: z.array(planHistorySchema).max(50),
   setup: projectSetupSchema.shape.checks,
   workflowVersions: z.array(artifactSchema).max(20),
+  verificationReports: z.array(verificationSchema).max(10),
+  manualTestEvidence: z.array(manualEvidenceSchema).max(20),
+  importedExecutionSummaries: z.array(executionEvidenceSchema).max(20),
+  debugReports: z.array(debugReportSchema).max(20),
 }).passthrough().superRefine((backup, context) => {
   const project = projectCreateSchema.safeParse({
     name: backup.project.name,
@@ -46,11 +116,34 @@ export const projectBackupImportSchema = z.object({
 
   if (backup.plan && backup.plan.projectId !== backup.project.id) context.addIssue({ code: "custom", path: ["plan", "projectId"], message: "The saved plan belongs to a different project." });
 
+  const revisions = new Set<number>();
+  for (const [index, plan] of backup.planHistory.entries()) {
+    if (plan.projectId !== backup.project.id) context.addIssue({ code: "custom", path: ["planHistory", index, "projectId"], message: "Plan revision belongs to a different project." });
+    if (revisions.has(plan.revision)) context.addIssue({ code: "custom", path: ["planHistory", index, "revision"], message: "Plan revisions must be unique." });
+    revisions.add(plan.revision);
+  }
+
   const versions = new Set<number>();
+  const artifactIds = new Map<string, number>();
   for (const [index, item] of backup.workflowVersions.entries()) {
     if (item.artifact.projectId !== backup.project.id) context.addIssue({ code: "custom", path: ["workflowVersions", index, "artifact", "projectId"], message: "Workflow version belongs to a different project." });
     if (versions.has(item.artifact.version)) context.addIssue({ code: "custom", path: ["workflowVersions", index, "artifact", "version"], message: "Workflow versions must be unique." });
     versions.add(item.artifact.version);
+    artifactIds.set(item.artifact.id, item.artifact.version);
+  }
+  const linkedRecords = [
+    ["verificationReports", backup.verificationReports],
+    ["manualTestEvidence", backup.manualTestEvidence],
+    ["importedExecutionSummaries", backup.importedExecutionSummaries],
+  ] as const;
+  for (const [field, records] of linkedRecords) {
+    for (const [index, record] of records.entries()) {
+      if (record.projectId !== backup.project.id) context.addIssue({ code: "custom", path: [field, index, "projectId"], message: "Evidence belongs to a different project." });
+      if (artifactIds.get(record.artifactId) !== record.artifactVersion) context.addIssue({ code: "custom", path: [field, index, "artifactId"], message: "Evidence must reference a workflow version in this backup." });
+    }
+  }
+  for (const [index, report] of backup.debugReports.entries()) {
+    if (report.projectId !== backup.project.id) context.addIssue({ code: "custom", path: ["debugReports", index, "projectId"], message: "Debug report belongs to a different project." });
   }
 });
 

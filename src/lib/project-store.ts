@@ -320,14 +320,19 @@ export function importProjectBackup(workspaceId: string, backup: ProjectBackupIm
       db.prepare(
         "INSERT INTO project_plans (project_id, workspace_id, objective, trigger_text, implementation_steps, assumptions, verification_checks, revision, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       ).run(projectId, workspaceId, objective, trigger, JSON.stringify(implementationSteps), assumptions, JSON.stringify(verificationChecks), revision, updatedAt);
-      db.prepare(
-        "INSERT INTO project_plan_versions (project_id, workspace_id, revision, objective, trigger_text, implementation_steps, assumptions, verification_checks, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(projectId, workspaceId, revision, objective, trigger, JSON.stringify(implementationSteps), assumptions, JSON.stringify(verificationChecks), updatedAt);
       if (backup.planFreshness === "current") saveProjectPlanRequirementContext(workspaceId, projectId, db);
       else if (backup.planFreshness === "requirements_changed") {
         db.prepare("INSERT INTO project_plan_requirement_context (project_id, workspace_id, requirements_fingerprint, updated_at) VALUES (?, ?, ?, ?)")
           .run(projectId, workspaceId, "imported-requirements-changed", now);
       }
+    }
+
+    const planHistory = new Map(backup.planHistory.map((version) => [version.revision, version]));
+    if (backup.plan && !planHistory.has(backup.plan.revision)) planHistory.set(backup.plan.revision, backup.plan);
+    for (const version of planHistory.values()) {
+      db.prepare(
+        "INSERT INTO project_plan_versions (project_id, workspace_id, revision, objective, trigger_text, implementation_steps, assumptions, verification_checks, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(projectId, workspaceId, version.revision, version.objective, version.trigger, JSON.stringify(version.implementationSteps), version.assumptions, JSON.stringify(version.verificationChecks), version.updatedAt);
     }
 
     const artifactIds = new Map<string, string>();
@@ -351,10 +356,44 @@ export function importProjectBackup(workspaceId: string, backup: ProjectBackupIm
     db.prepare("INSERT INTO project_setup_artifact_context (project_id, workspace_id, artifact_id, updated_at) VALUES (?, ?, ?, ?)")
       .run(projectId, workspaceId, latestArtifactId ? artifactIds.get(latestArtifactId.artifact.id) ?? null : null, now);
 
+    const remapArtifactId = (sourceArtifactId: string) => {
+      const id = artifactIds.get(sourceArtifactId);
+      if (!id) throw new Error("Backup evidence references a missing workflow version.");
+      return id;
+    };
+    for (const report of backup.verificationReports) {
+      db.prepare(
+        "INSERT INTO project_workflow_verifications (id, project_id, artifact_id, workspace_id, artifact_version, status, checks_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(randomUUID(), projectId, remapArtifactId(report.artifactId), workspaceId, report.artifactVersion, report.status, JSON.stringify(report.checks), report.createdAt);
+    }
+    for (const evidence of backup.manualTestEvidence) {
+      db.prepare(
+        "INSERT INTO project_manual_workflow_evidence (id, project_id, artifact_id, workspace_id, artifact_version, result, environment, summary, execution_reference, reported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(randomUUID(), projectId, remapArtifactId(evidence.artifactId), workspaceId, evidence.artifactVersion, evidence.result, evidence.environment, evidence.summary, evidence.executionReference, evidence.reportedAt);
+    }
+    for (const evidence of backup.importedExecutionSummaries) {
+      db.prepare(
+        "INSERT INTO project_n8n_execution_evidence (id, project_id, artifact_id, workspace_id, artifact_version, execution_id, reported_status, node_names_json, last_node_executed, failed_nodes_json, reported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(randomUUID(), projectId, remapArtifactId(evidence.artifactId), workspaceId, evidence.artifactVersion, evidence.executionId, evidence.reportedStatus, JSON.stringify(evidence.nodeNames), evidence.lastNodeExecuted, JSON.stringify(evidence.failedNodes), evidence.reportedAt);
+    }
+    for (const report of backup.debugReports) {
+      db.prepare(
+        "INSERT INTO project_debug_reports (id, project_id, workspace_id, platform, error_text, expected, diagnosis_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(randomUUID(), projectId, workspaceId, report.platform, report.error, report.expected, JSON.stringify(report.diagnosis), report.createdAt);
+    }
+
     const project = getProject(workspaceId, projectId);
     if (!project) throw new Error("Imported project could not be loaded.");
     db.exec("COMMIT");
-    return { project, workflowVersionsImported: artifactIds.size };
+    return {
+      project,
+      workflowVersionsImported: artifactIds.size,
+      planRevisionsImported: planHistory.size,
+      verificationReportsImported: backup.verificationReports.length,
+      manualTestsImported: backup.manualTestEvidence.length,
+      executionSummariesImported: backup.importedExecutionSummaries.length,
+      debugReportsImported: backup.debugReports.length,
+    };
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
