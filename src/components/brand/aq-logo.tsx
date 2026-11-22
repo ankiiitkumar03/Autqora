@@ -109,6 +109,10 @@ export function AqLogo({
         tone={tone ?? (theme === "light" ? "light" : "violet")}
         gradientId={gradientId}
       />
+      <span
+        aria-hidden="true"
+        className="h-[1.9em] w-px shrink-0 bg-violet"
+      />
       <span className="flex flex-col">
         <span className="font-display text-[1.02rem] font-semibold leading-none tracking-[0.14em]">
           AUTQORA

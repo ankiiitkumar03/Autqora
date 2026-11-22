@@ -52,6 +52,7 @@ export function SiteNav() {
           <AqLogo
             markClassName="h-7 w-7 transition-transform duration-300 group-hover:rotate-[8deg]"
             className="gap-2.5"
+            tagline
           />
         </Link>
 
