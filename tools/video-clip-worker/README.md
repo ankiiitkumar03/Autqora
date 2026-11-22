@@ -15,6 +15,14 @@ The n8n container reaches this Windows host through `host.docker.internal`. If t
 
 The source video must be public and available to yt-dlp without sign-in. The service refuses playlists and non-YouTube hosts, limits source duration to four hours, and requires the API key. Do not use it to bypass access controls or process content without permission. Only one video job runs at a time to avoid competing downloads and FFmpeg processes on a local machine. Older clip folders are removed before the next authenticated job starts. The default retention is seven days; set `CLIP_RETENTION_SECONDS` in `.env` to a value from 3600 (one hour) through 2592000 (30 days). Expired folders are cleaned when the next job starts, so an idle worker may keep expired files until then. `docker compose down -v` removes the entire clip volume.
 
+## Duplicate-safe publishing
+
+The worker gives each generated MP4 a SHA-256 `clipId`. Generated YouTube and Instagram publishing branches reserve the `(clipId, platform)` pair through `/publishing/claim` before upload; only a newly reserved item passes to the publisher. After the provider returns an item ID, the workflow records it through `/publishing/complete`. The SQLite ledger lives in the `autqora_clips` named volume and survives container recreation and `docker compose down`.
+
+This is at-most-once protection. If an upload might have succeeded but n8n stopped before recording its result, the ledger keeps the entry in `publishing` and blocks another upload. Check the provider account first. Then either record the known platform item ID with the authenticated `POST /publishing/complete` endpoint or, only after confirming that no post was created, reset the reservation with `POST /publishing/reset` and `{"clipId":"<64-character SHA-256>","platform":"youtube","confirmedNotPublished":true}` (use `instagram` for Instagram). The status endpoint is `GET /publishing/status/<clipId>`. These endpoints require the same Bearer API key as clip generation. `docker compose down -v` permanently removes both generated clips and the ledger.
+
+Regenerate the n8n workflow after updating the application so it includes the claim and result-recording nodes. Existing saved workflow versions do not change automatically. Structural workflow checks do not prove that n8n or the social platform APIs have been runtime-tested.
+
 ## Stop and remove generated clips
 
 Run `docker compose down` to stop the service. To permanently remove generated clips, use `docker compose down -v`; this deletes the named clip volume.

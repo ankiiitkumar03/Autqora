@@ -175,6 +175,17 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
   const instagramMeasureName = "Measure Reel upload bytes";
   const instagramUploadName = "Upload Reel video bytes to Meta";
   const instagramPublishName = "Publish Instagram Reel";
+  const youtubeClaimName = "Claim YouTube clip publication";
+  const youtubeClaimPairName = "Pair YouTube claim with clip";
+  const youtubeClaimGateName = "Only publish newly claimed YouTube clips";
+  const youtubeResultPairName = "Pair YouTube result with clip";
+  const youtubeCompleteName = "Record YouTube publication result";
+  const instagramClaimName = "Claim Instagram clip publication";
+  const instagramClaimPairName = "Pair Instagram claim with clip";
+  const instagramClaimGateName = "Only publish newly claimed Instagram clips";
+  const instagramResultPairName = "Pair Instagram result with clip";
+  const instagramResultName = "Format Instagram publication result";
+  const instagramCompleteName = "Record Instagram publication result";
   const clipSelectionControlsPass = !isClipPublishingScenario || (
     typeof clipOptionsCode === "string"
     && /selectionMode\s*:\s*["']evenly_spaced["']/.test(clipOptionsCode)
@@ -253,19 +264,58 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
     && hasConnection(reviewName, approvalGateName)
     && hasConnection(approvalGateName, downloadName)
     && hasConnection(downloadName, youtubeGateName)
-    && hasConnection(youtubeGateName, String(youtubeUpload?.name ?? ""))
+    && hasConnection(youtubeGateName, youtubeClaimName)
+    && hasConnection(youtubeClaimName, youtubeClaimPairName)
+    && hasConnection(youtubeClaimPairName, youtubeClaimGateName)
+    && hasConnection(youtubeClaimGateName, String(youtubeUpload?.name ?? ""))
     && reviewFormPass
     && (scenario !== "youtube_clip_publishing_pipeline" || (
       nodes.some((node) => node.name === instagramGateName && node.type === "n8n-nodes-base.code" && /publishToInstagram\s*===\s*true/.test(String((node.parameters as Record<string, unknown> | undefined)?.jsCode)))
       && hasConnection(downloadName, instagramGateName)
-      && hasConnection(instagramGateName, instagramSessionName)
-      && hasConnection(instagramGateName, instagramMergeName)
+      && hasConnection(instagramGateName, instagramClaimName)
+      && hasConnection(instagramClaimName, instagramClaimPairName)
+      && hasConnection(instagramClaimPairName, instagramClaimGateName)
+      && hasConnection(instagramClaimGateName, instagramSessionName)
+      && hasConnection(instagramClaimGateName, instagramMergeName)
       && hasConnection(instagramSessionName, instagramMergeName)
       && hasConnection(instagramMergeName, instagramMeasureName)
       && hasConnection(instagramMeasureName, instagramUploadName)
       && hasConnection(instagramUploadName, instagramPublishName)
     ))
   );
+  const hasYoutubePublisher = nodes.some((node) => node.name === "Upload YouTube Short");
+  const youtubeIdempotencyPass = !hasYoutubePublisher || (
+    nodes.some((node) => node.name === youtubeClaimName && node.type === "n8n-nodes-base.httpRequest" && (node.parameters as Record<string, unknown> | undefined)?.url === "http://host.docker.internal:8090/publishing/claim")
+    && nodes.some((node) => node.name === youtubeClaimPairName && node.type === "n8n-nodes-base.merge")
+    && nodes.some((node) => node.name === youtubeClaimGateName && node.type === "n8n-nodes-base.code" && String((node.parameters as Record<string, unknown> | undefined)?.jsCode).includes("claimed === true"))
+    && nodes.some((node) => node.name === youtubeCompleteName && node.type === "n8n-nodes-base.httpRequest" && (node.parameters as Record<string, unknown> | undefined)?.url === "http://host.docker.internal:8090/publishing/complete")
+    && hasConnection(youtubeGateName, youtubeClaimName)
+    && hasConnection(youtubeGateName, youtubeClaimPairName)
+    && hasConnection(youtubeClaimName, youtubeClaimPairName)
+    && hasConnection(youtubeClaimPairName, youtubeClaimGateName)
+    && hasConnection(youtubeClaimGateName, "Upload YouTube Short")
+    && hasConnection(youtubeClaimGateName, youtubeResultPairName)
+    && hasConnection("Upload YouTube Short", youtubeResultPairName)
+    && hasConnection(youtubeResultPairName, youtubeCompleteName)
+  );
+  const instagramIdempotencyPass = scenario !== "youtube_clip_publishing_pipeline" || (
+    nodes.some((node) => node.name === instagramClaimName && node.type === "n8n-nodes-base.httpRequest" && (node.parameters as Record<string, unknown> | undefined)?.url === "http://host.docker.internal:8090/publishing/claim")
+    && nodes.some((node) => node.name === instagramClaimPairName && node.type === "n8n-nodes-base.merge")
+    && nodes.some((node) => node.name === instagramClaimGateName && node.type === "n8n-nodes-base.code" && String((node.parameters as Record<string, unknown> | undefined)?.jsCode).includes("claimed === true"))
+    && nodes.some((node) => node.name === instagramResultName && node.type === "n8n-nodes-base.code" && String((node.parameters as Record<string, unknown> | undefined)?.jsCode).includes("platformItemId"))
+    && nodes.some((node) => node.name === instagramCompleteName && node.type === "n8n-nodes-base.httpRequest" && (node.parameters as Record<string, unknown> | undefined)?.url === "http://host.docker.internal:8090/publishing/complete")
+    && hasConnection(instagramGateName, instagramClaimName)
+    && hasConnection(instagramGateName, instagramClaimPairName)
+    && hasConnection(instagramClaimName, instagramClaimPairName)
+    && hasConnection(instagramClaimPairName, instagramClaimGateName)
+    && hasConnection(instagramClaimGateName, instagramSessionName)
+    && hasConnection(instagramClaimGateName, instagramMergeName)
+    && hasConnection(instagramPublishName, instagramResultName)
+    && hasConnection(instagramResultName, instagramResultPairName)
+    && hasConnection(instagramMergeName, instagramResultPairName)
+    && hasConnection(instagramResultPairName, instagramCompleteName)
+  );
+  const publicationIdempotencyPass = youtubeIdempotencyPass && instagramIdempotencyPass;
   const structuralPass = structureErrors.length === 0;
   const placeholdersPass = !hasPlaceholders;
   const scenarioPass = scenario === "imported_n8n" || scenario === "ai_generated_n8n"
@@ -292,7 +342,7 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
         ? names.some((name) => /when clicking.*execute workflow/i.test(name)) && names.some((name) => /autqora implementation draft/i.test(name))
         : false;
   const status = structuralPass && placeholdersPass && webhookAuthConfigured && credentialConfigured
-    && scenarioPass && clipPublishingControlsPass && clipSelectionControlsPass ? "ready_for_manual_test" as const
+    && scenarioPass && clipPublishingControlsPass && clipSelectionControlsPass && publicationIdempotencyPass ? "ready_for_manual_test" as const
     : "needs_setup" as const;
   const checks = [
     {
@@ -355,6 +405,14 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
       detail: reviewFormPass
         ? "The required form lists the opted-in clips and start times from the current run; the user can approve all or select individual clips, and only those exact items are restored for upload. Rejection, invalid choices, or a 24-hour timeout fail closed."
         : "The workflow must pause for a required decision, show the current run's clip links and start times, and restore only explicitly approved clips.",
+    }] : []),
+    ...(hasYoutubePublisher ? [{
+      id: "publication_idempotency",
+      label: "Duplicate-safe publishing ledger",
+      passed: publicationIdempotencyPass,
+      detail: publicationIdempotencyPass
+        ? "Each opted-in clip is claimed by content hash and platform before upload; provider item IDs are recorded after success. Uncertain claims require manual reconciliation. This is structural verification only."
+        : "Regenerate this workflow to include the worker claim, claimed-only upload gate, and post-upload result recording for each publishing branch.",
     }] : []),
     {
       id: "placeholders",

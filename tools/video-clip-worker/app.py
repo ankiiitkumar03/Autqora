@@ -1,7 +1,9 @@
 import hmac
+import hashlib
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -10,6 +12,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 from uuid import uuid4
+from datetime import datetime, timezone
 
 import yt_dlp
 from fastapi import FastAPI, Header, HTTPException
@@ -20,6 +23,8 @@ from pydantic import BaseModel, Field, model_validator
 APP_DIR = Path(__file__).resolve().parent
 CLIPS_DIR = Path(os.environ.get("CLIPS_DIR", APP_DIR / "clips")).resolve()
 CLIPS_DIR.mkdir(parents=True, exist_ok=True)
+PUBLISH_LEDGER_PATH = Path(os.environ.get("PUBLISH_LEDGER_PATH", CLIPS_DIR / "publishing-ledger.sqlite3")).resolve()
+PUBLISH_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
 API_KEY = os.environ.get("CLIP_WORKER_API_KEY", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8090").rstrip("/")
 MAX_SOURCE_SECONDS = 4 * 60 * 60
@@ -55,6 +60,50 @@ class ClipRequest(BaseModel):
         if any(later - earlier < self.clipDurationSeconds for earlier, later in zip(starts, starts[1:])):
             raise ValueError("Manual clip timestamps must not overlap; leave at least the clip duration between starts.")
         return self
+
+
+class PublishClaimRequest(BaseModel):
+    clipId: str = Field(pattern=r"^[a-f0-9]{64}$")
+    platform: Literal["youtube", "instagram"]
+
+
+class PublishCompleteRequest(PublishClaimRequest):
+    platformItemId: str = Field(min_length=1, max_length=512)
+
+
+class PublishResetRequest(PublishClaimRequest):
+    confirmedNotPublished: Literal[True]
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def open_publish_ledger() -> sqlite3.Connection:
+    connection = sqlite3.connect(PUBLISH_LEDGER_PATH, timeout=10, isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA busy_timeout = 10000")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS clip_publications (
+            clip_id TEXT NOT NULL CHECK(length(clip_id) = 64),
+            platform TEXT NOT NULL CHECK(platform IN ('youtube', 'instagram')),
+            status TEXT NOT NULL CHECK(status IN ('publishing', 'published')),
+            platform_item_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (clip_id, platform),
+            CHECK ((status = 'publishing' AND platform_item_id IS NULL)
+                OR (status = 'published' AND platform_item_id IS NOT NULL))
+        )
+        """
+    )
+    return connection
+
+
+def sha256_file(path: Path) -> str:
+    with path.open("rb") as media_file:
+        return hashlib.file_digest(media_file, "sha256").hexdigest()
 
 
 def require_api_key(authorization: str | None) -> None:
@@ -191,7 +240,136 @@ def health():
                 "apiKeyConfigured": api_key_configured,
             },
         )
-    return {"ok": True, "ffmpegAvailable": True, "apiKeyConfigured": True}
+    ledger_connection = None
+    try:
+        ledger_connection = open_publish_ledger()
+        ledger_connection.execute("SELECT 1").fetchone()
+    except sqlite3.Error as exc:
+        raise HTTPException(status_code=503, detail="Publishing ledger is unavailable.") from exc
+    finally:
+        if ledger_connection is not None:
+            ledger_connection.close()
+    return {"ok": True, "ffmpegAvailable": True, "apiKeyConfigured": True, "publishLedgerReady": True}
+
+
+@app.post("/publishing/claim")
+def claim_publication(payload: PublishClaimRequest, authorization: str | None = Header(default=None)):
+    require_api_key(authorization)
+    connection = open_publish_ledger()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        now = utc_now()
+        inserted = connection.execute(
+            "INSERT OR IGNORE INTO clip_publications (clip_id, platform, status, platform_item_id, created_at, updated_at) VALUES (?, ?, 'publishing', NULL, ?, ?)",
+            (payload.clipId, payload.platform, now, now),
+        ).rowcount == 1
+        row = connection.execute(
+            "SELECT status, platform_item_id FROM clip_publications WHERE clip_id = ? AND platform = ?",
+            (payload.clipId, payload.platform),
+        ).fetchone()
+        connection.execute("COMMIT")
+        if row is None:
+            raise HTTPException(status_code=503, detail="Could not read the publication ledger entry.")
+        return {
+            "clipId": payload.clipId,
+            "platform": payload.platform,
+            "claimed": inserted,
+            "status": "claimed" if inserted else row["status"],
+            "platformItemId": row["platform_item_id"],
+        }
+    except sqlite3.Error as exc:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise HTTPException(status_code=503, detail="Publishing ledger is unavailable.") from exc
+    finally:
+        connection.close()
+
+
+@app.post("/publishing/complete")
+def complete_publication(payload: PublishCompleteRequest, authorization: str | None = Header(default=None)):
+    require_api_key(authorization)
+    platform_item_id = payload.platformItemId.strip()
+    if not platform_item_id:
+        raise HTTPException(status_code=422, detail="A non-empty platform item ID is required.")
+    connection = open_publish_ledger()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT status, platform_item_id FROM clip_publications WHERE clip_id = ? AND platform = ?",
+            (payload.clipId, payload.platform),
+        ).fetchone()
+        if row is None:
+            connection.execute("ROLLBACK")
+            raise HTTPException(status_code=409, detail="Claim this clip and platform before recording a publishing result.")
+        if row["status"] == "published":
+            if row["platform_item_id"] != platform_item_id:
+                connection.execute("ROLLBACK")
+                raise HTTPException(status_code=409, detail="A different platform item ID is already recorded for this clip.")
+            connection.execute("COMMIT")
+            return {"clipId": payload.clipId, "platform": payload.platform, "status": "published", "platformItemId": platform_item_id, "alreadyRecorded": True}
+        connection.execute(
+            "UPDATE clip_publications SET status = 'published', platform_item_id = ?, updated_at = ? WHERE clip_id = ? AND platform = ? AND status = 'publishing'",
+            (platform_item_id, utc_now(), payload.clipId, payload.platform),
+        )
+        connection.execute("COMMIT")
+        return {"clipId": payload.clipId, "platform": payload.platform, "status": "published", "platformItemId": platform_item_id, "alreadyRecorded": False}
+    except sqlite3.Error as exc:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise HTTPException(status_code=503, detail="Publishing ledger is unavailable.") from exc
+    finally:
+        connection.close()
+
+
+@app.get("/publishing/status/{clip_id}")
+def publication_status(clip_id: str, authorization: str | None = Header(default=None)):
+    require_api_key(authorization)
+    if not re.fullmatch(r"[a-f0-9]{64}", clip_id):
+        raise HTTPException(status_code=404, detail="Clip publication record not found.")
+    connection = open_publish_ledger()
+    try:
+        rows = connection.execute(
+            "SELECT platform, status, platform_item_id, created_at, updated_at FROM clip_publications WHERE clip_id = ? ORDER BY platform",
+            (clip_id,),
+        ).fetchall()
+        return {"clipId": clip_id, "publications": [
+            {"platform": row["platform"], "status": row["status"], "platformItemId": row["platform_item_id"], "createdAt": row["created_at"], "updatedAt": row["updated_at"]}
+            for row in rows
+        ]}
+    except sqlite3.Error as exc:
+        raise HTTPException(status_code=503, detail="Publishing ledger is unavailable.") from exc
+    finally:
+        connection.close()
+
+
+@app.post("/publishing/reset")
+def reset_unpublished_claim(payload: PublishResetRequest, authorization: str | None = Header(default=None)):
+    require_api_key(authorization)
+    connection = open_publish_ledger()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT status FROM clip_publications WHERE clip_id = ? AND platform = ?",
+            (payload.clipId, payload.platform),
+        ).fetchone()
+        if row is None:
+            connection.execute("ROLLBACK")
+            raise HTTPException(status_code=404, detail="Publication claim not found.")
+        if row["status"] != "publishing":
+            connection.execute("ROLLBACK")
+            raise HTTPException(status_code=409, detail="Published records cannot be reset.")
+        connection.execute(
+            "DELETE FROM clip_publications WHERE clip_id = ? AND platform = ? AND status = 'publishing'",
+            (payload.clipId, payload.platform),
+        )
+        connection.execute("COMMIT")
+        return {"clipId": payload.clipId, "platform": payload.platform, "status": "claim_reset"}
+    except sqlite3.Error as exc:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise HTTPException(status_code=503, detail="Publishing ledger is unavailable.") from exc
+    finally:
+        connection.close()
 
 
 @app.post("/clips")
@@ -286,6 +464,7 @@ def create_clip_job(payload: ClipRequest):
                 ])
                 output.append({
                     "fileName": filename,
+                    "clipId": sha256_file(target),
                     "startSeconds": start,
                     "durationSeconds": payload.clipDurationSeconds,
                     "selectionMode": payload.selectionMode,

@@ -40,7 +40,7 @@ export function recommendTools(project: Project): ToolRecommendation[] {
         fit: "Best fit",
         coverage: n8nCoverage,
         reasons: [scenario.isClipPublishingPipeline
-          ? `The brief combines live YouTube clipping with Instagram and YouTube publishing. AUTQORA exports archived-video clipping with opt-in YouTube and Instagram Reels branches plus same-run individual clip approval; live capture and semantic moment selection remain missing.${requirementsReason}${budgetReasons}`
+          ? `The brief combines live YouTube clipping with Instagram and YouTube publishing. AUTQORA exports archived-video clipping with opt-in YouTube and Instagram Reels branches, same-run individual clip approval, and a persistent at-most-once publishing ledger; live capture, semantic moment selection, and automatic recovery of uncertain uploads remain missing.${requirementsReason}${budgetReasons}`
           : `${usesSocial ? "The brief mentions social posting, and n8n can call the Meta Graph API through HTTP Request nodes." : "This is the platform selected in the project brief."}${requirementsReason}${budgetReasons}`, "Exportable workflow JSON supports user-controlled import into a self-hosted or hosted n8n instance."],
         tradeoffs: ["You configure and maintain n8n, credentials, hosting, and schedule availability.", scenario.isClipPublishingPipeline ? "The clipper export is still partial; neither publisher branch has been runtime-tested, and it does not capture live streams." : "A generated export still needs a real import and provider-side test."],
         costNote: "AUTQORA has not checked live n8n plan prices. Hosting and service usage may cost money; check current provider pricing.",

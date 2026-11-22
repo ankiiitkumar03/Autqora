@@ -60,7 +60,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
     const scenarioCheck = scenarioChecks.find((check) => check.id === "scenario_nodes");
     const publishingCheck = scenarioChecks.find((check) => check.id === "publishing_controls");
     const reviewGateCheck = scenarioChecks.find((check) => check.id === "clip_review_gate");
-    if (!scenarioCheck?.passed || publishingCheck && !publishingCheck.passed || reviewGateCheck && !reviewGateCheck.passed) return Response.json({ error: "The workflow does not match the selected generated scenario or is missing required publishing controls." }, { status: 400, headers });
+    const idempotencyCheck = scenarioChecks.find((check) => check.id === "publication_idempotency");
+    if (!scenarioCheck?.passed || publishingCheck && !publishingCheck.passed || reviewGateCheck && !reviewGateCheck.passed || idempotencyCheck && !idempotencyCheck.passed) return Response.json({ error: "The workflow does not match the selected generated scenario or is missing required publishing controls." }, { status: 400, headers });
     if (findInlineWorkflowSecrets(requestBody.workflow).length) return Response.json({ error: "Remove inline credentials before saving the workflow. Keep secrets in n8n credentials." }, { status: 400, headers });
     try {
       const name = (requestBody.workflow as { name: string }).name;
@@ -120,6 +121,17 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
         const reviewName = "Review clips before publishing";
         const approvalGateName = "Only publish approved clips";
         const downloadName = "Download clip for publishing";
+        const youtubeClaimName = "Claim YouTube clip publication";
+        const youtubePairName = "Pair YouTube claim with clip";
+        const youtubeClaimGateName = "Only publish newly claimed YouTube clips";
+        const youtubeResultPairName = "Pair YouTube result with clip";
+        const youtubeCompleteName = "Record YouTube publication result";
+        const instagramClaimName = "Claim Instagram clip publication";
+        const instagramClaimPairName = "Pair Instagram claim with clip";
+        const instagramClaimGateName = "Only publish newly claimed Instagram clips";
+        const instagramResultPairName = "Pair Instagram result with clip";
+        const instagramResultName = "Format Instagram publication result";
+        const instagramCompleteName = "Record Instagram publication result";
         const instagramOptions = isClipPublishingPipeline
           ? `, instagramUserId: "REPLACE_WITH_INSTAGRAM_PROFESSIONAL_ACCOUNT_ID", instagramCaption: "REPLACE_WITH_REEL_CAPTION"`
           : "";
@@ -152,7 +164,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
             {
               parameters: {
                 mode: "runOnceForAllItems",
-                jsCode: `const response = $input.first().json;\nif (!Array.isArray(response.clips) || response.clips.length === 0) throw new Error("Clip worker returned no clips.");\nconst options = $("Set clip options").first().json;\nconst privacyChoices = ["private", "unlisted", "public"];\nif (!privacyChoices.includes(options.youtubePrivacyStatus)) throw new Error("Choose YouTube privacy: private, unlisted, or public.");\nconst titlePrefix = String(options.youtubeTitlePrefix ?? "").trim();\nif (!titlePrefix || /[<>]/.test(titlePrefix)) throw new Error("Set a YouTube title prefix without angle brackets.");\nconst description = String(options.youtubeDescription ?? "");\nif (/[<>]/.test(description)) throw new Error("YouTube descriptions cannot contain angle brackets.");\nif (new TextEncoder().encode(description).length > 5000) throw new Error("YouTube description must be 5000 bytes or fewer.");\nreturn response.clips.map((clip) => ({ json: { fileName: clip.fileName, startSeconds: clip.startSeconds, durationSeconds: clip.durationSeconds, selectionMode: clip.selectionMode ?? options.selectionMode, selectionBasis: clip.selectionBasis ?? options.selectionMode, downloadUrl: clip.downloadUrl, youtubeTitle: (titlePrefix + " " + clip.fileName).slice(0, 100), youtubeDescription: description, youtubePrivacyStatus: options.youtubePrivacyStatus, publishToYouTube: options.publishToYouTube === true, publishToInstagram: options.publishToInstagram === true } }));`,
+                jsCode: `const response = $input.first().json;\nif (!Array.isArray(response.clips) || response.clips.length === 0) throw new Error("Clip worker returned no clips.");\nconst options = $("Set clip options").first().json;\nconst privacyChoices = ["private", "unlisted", "public"];\nif (!privacyChoices.includes(options.youtubePrivacyStatus)) throw new Error("Choose YouTube privacy: private, unlisted, or public.");\nconst titlePrefix = String(options.youtubeTitlePrefix ?? "").trim();\nif (!titlePrefix || /[<>]/.test(titlePrefix)) throw new Error("Set a YouTube title prefix without angle brackets.");\nconst description = String(options.youtubeDescription ?? "");\nif (/[<>]/.test(description)) throw new Error("YouTube descriptions cannot contain angle brackets.");\nif (new TextEncoder().encode(description).length > 5000) throw new Error("YouTube description must be 5000 bytes or fewer.");\nreturn response.clips.map((clip) => ({ json: { clipId: clip.clipId, fileName: clip.fileName, startSeconds: clip.startSeconds, durationSeconds: clip.durationSeconds, selectionMode: clip.selectionMode ?? options.selectionMode, selectionBasis: clip.selectionBasis ?? options.selectionMode, downloadUrl: clip.downloadUrl, youtubeTitle: (titlePrefix + " " + clip.fileName).slice(0, 100), youtubeDescription: description, youtubePrivacyStatus: options.youtubePrivacyStatus, publishToYouTube: options.publishToYouTube === true, publishToInstagram: options.publishToInstagram === true } }));`,
               },
               id: randomUUID(), name: outputName, type: "n8n-nodes-base.code", typeVersion: 2, position: [1020, 300],
             },
@@ -215,6 +227,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
               },
               id: randomUUID(), name: "Only upload to YouTube when opted in", type: "n8n-nodes-base.code", typeVersion: 2, position: [2180, 160],
             },
+            {
+              parameters: { method: "POST", url: "http://host.docker.internal:8090/publishing/claim", authentication: "genericCredentialType", genericAuthType: "httpHeaderAuth", sendBody: true, contentType: "json", specifyBody: "json", jsonBody: "={{ { clipId: $json.clipId, platform: 'youtube' } }}", options: {} },
+              id: randomUUID(), name: youtubeClaimName, type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [2400, 40],
+              credentials: { httpHeaderAuth: { id: "REPLACE_WITH_CLIP_WORKER_CREDENTIAL_ID", name: "AUTQORA Clip Worker" } },
+            },
+            { parameters: { mode: "combine", combineBy: "combineByPosition", options: {} }, id: randomUUID(), name: youtubePairName, type: "n8n-nodes-base.merge", typeVersion: 3.2, position: [2640, 80] },
+            { parameters: { mode: "runOnceForAllItems", jsCode: `return $input.all().filter((item) => item.json.claimed === true);` }, id: randomUUID(), name: youtubeClaimGateName, type: "n8n-nodes-base.code", typeVersion: 2, position: [2880, 80] },
             ...(isClipPublishingPipeline ? [{
               parameters: { mode: "runOnceForAllItems", jsCode: `return $input.all().filter((item) => item.json.publishToInstagram === true);` },
               id: randomUUID(), name: "Only upload to Instagram when opted in", type: "n8n-nodes-base.code", typeVersion: 2, position: [2180, 500],
@@ -227,10 +246,26 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 binaryProperty: "data",
                 options: { description: "={{ $json.youtubeDescription }}", notifySubscribers: false, privacyStatus: "={{ $json.youtubePrivacyStatus }}" },
               },
-              id: randomUUID(), name: "Upload YouTube Short", type: "n8n-nodes-base.youTube", typeVersion: 1, position: [2520, 160],
+              id: randomUUID(), name: "Upload YouTube Short", type: "n8n-nodes-base.youTube", typeVersion: 1, position: [3120, 80],
               credentials: { youTubeOAuth2Api: { id: "REPLACE_WITH_YOUTUBE_CREDENTIAL_ID", name: "YouTube OAuth2" } },
             },
+            { parameters: { mode: "combine", combineBy: "combineByPosition", options: {} }, id: randomUUID(), name: youtubeResultPairName, type: "n8n-nodes-base.merge", typeVersion: 3.2, position: [3360, 120] },
+            {
+              parameters: { method: "POST", url: "http://host.docker.internal:8090/publishing/complete", authentication: "genericCredentialType", genericAuthType: "httpHeaderAuth", sendBody: true, contentType: "json", specifyBody: "json", jsonBody: "={{ { clipId: $json.clipId, platform: 'youtube', platformItemId: String($json.id) } }}", options: {} },
+              id: randomUUID(), name: youtubeCompleteName, type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [3600, 120],
+              credentials: { httpHeaderAuth: { id: "REPLACE_WITH_CLIP_WORKER_CREDENTIAL_ID", name: "AUTQORA Clip Worker" } },
+            },
             ...(isClipPublishingPipeline ? [{
+              parameters: { method: "POST", url: "http://host.docker.internal:8090/publishing/claim", authentication: "genericCredentialType", genericAuthType: "httpHeaderAuth", sendBody: true, contentType: "json", specifyBody: "json", jsonBody: "={{ { clipId: $json.clipId, platform: 'instagram' } }}", options: {} },
+              id: randomUUID(), name: instagramClaimName, type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [2400, 620],
+              credentials: { httpHeaderAuth: { id: "REPLACE_WITH_CLIP_WORKER_CREDENTIAL_ID", name: "AUTQORA Clip Worker" } },
+            }, {
+              parameters: { mode: "combine", combineBy: "combineByPosition", options: {} },
+              id: randomUUID(), name: instagramClaimPairName, type: "n8n-nodes-base.merge", typeVersion: 3.2, position: [2640, 580],
+            }, {
+              parameters: { mode: "runOnceForAllItems", jsCode: `return $input.all().filter((item) => item.json.claimed === true);` },
+              id: randomUUID(), name: instagramClaimGateName, type: "n8n-nodes-base.code", typeVersion: 2, position: [2880, 580],
+            }, {
               parameters: {
                 method: "POST",
                 url: "=https://graph.facebook.com/v27.0/{{$('Set clip options').first().json.instagramUserId}}/media",
@@ -244,19 +279,19 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 ] },
                 options: {},
               },
-              id: randomUUID(), name: "Create Instagram Reel upload session", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [2520, 500],
+              id: randomUUID(), name: "Create Instagram Reel upload session", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [3120, 500],
               credentials: { httpHeaderAuth: { id: "REPLACE_WITH_META_BEARER_CREDENTIAL_ID", name: "AUTQORA Meta Graph Bearer" } },
             },
             {
               parameters: { mode: "combine", combineBy: "combineByPosition", options: {} },
-              id: randomUUID(), name: "Pair Reel session with clip file", type: "n8n-nodes-base.merge", typeVersion: 3.2, position: [2760, 500],
+              id: randomUUID(), name: "Pair Reel session with clip file", type: "n8n-nodes-base.merge", typeVersion: 3.2, position: [3360, 500],
             },
             {
               parameters: {
                 mode: "runOnceForAllItems",
                 jsCode: `const items = $input.all();\nfor (let index = 0; index < items.length; index++) {\n  const buffer = await this.helpers.getBinaryDataBuffer(index, "data");\n  items[index].json.fileSizeBytes = buffer.length;\n}\nreturn items;`,
               },
-              id: randomUUID(), name: "Measure Reel upload bytes", type: "n8n-nodes-base.code", typeVersion: 2, position: [3000, 500],
+              id: randomUUID(), name: "Measure Reel upload bytes", type: "n8n-nodes-base.code", typeVersion: 2, position: [3600, 500],
             },
             {
               parameters: {
@@ -274,7 +309,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 inputDataFieldName: "data",
                 options: {},
               },
-              id: randomUUID(), name: "Upload Reel video bytes to Meta", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [3240, 500],
+              id: randomUUID(), name: "Upload Reel video bytes to Meta", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [3840, 500],
               credentials: { httpHeaderAuth: { id: "REPLACE_WITH_META_OAUTH_UPLOAD_CREDENTIAL_ID", name: "AUTQORA Meta Resumable Upload" } },
             },
             {
@@ -287,8 +322,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
                 queryParameters: { parameters: [{ name: "creation_id", value: "={{ $('Pair Reel session with clip file').item.json.id }}" }] },
                 options: {},
               },
-              id: randomUUID(), name: "Publish Instagram Reel", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [3480, 500],
+              id: randomUUID(), name: "Publish Instagram Reel", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [4080, 500],
               credentials: { httpHeaderAuth: { id: "REPLACE_WITH_META_BEARER_CREDENTIAL_ID", name: "AUTQORA Meta Graph Bearer" } },
+            }, {
+              parameters: { mode: "runOnceForAllItems", jsCode: `return $input.all().map((item) => { const platformItemId = String(item.json.id ?? "").trim(); if (!platformItemId) throw new Error("Instagram did not return a published media ID."); item.json = { platformItemId }; return item; });` },
+              id: randomUUID(), name: instagramResultName, type: "n8n-nodes-base.code", typeVersion: 2, position: [4320, 660],
+            }, {
+              parameters: { mode: "combine", combineBy: "combineByPosition", options: {} },
+              id: randomUUID(), name: instagramResultPairName, type: "n8n-nodes-base.merge", typeVersion: 3.2, position: [4560, 500],
+            }, {
+              parameters: { method: "POST", url: "http://host.docker.internal:8090/publishing/complete", authentication: "genericCredentialType", genericAuthType: "httpHeaderAuth", sendBody: true, contentType: "json", specifyBody: "json", jsonBody: "={{ { clipId: $json.clipId, platform: 'instagram', platformItemId: $json.platformItemId } }}", options: {} },
+              id: randomUUID(), name: instagramCompleteName, type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [4800, 500],
+              credentials: { httpHeaderAuth: { id: "REPLACE_WITH_CLIP_WORKER_CREDENTIAL_ID", name: "AUTQORA Clip Worker" } },
             }] : []),
           ],
           connections: {
@@ -303,16 +348,39 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
               { node: "Only upload to YouTube when opted in", type: "main", index: 0 },
               ...(isClipPublishingPipeline ? [{ node: "Only upload to Instagram when opted in", type: "main", index: 0 }] : []),
             ]] },
-            "Only upload to YouTube when opted in": { main: [[{ node: "Upload YouTube Short", type: "main", index: 0 }]] },
+            "Only upload to YouTube when opted in": { main: [[
+              { node: youtubeClaimName, type: "main", index: 0 },
+              { node: youtubePairName, type: "main", index: 0 },
+            ]] },
+            [youtubeClaimName]: { main: [[{ node: youtubePairName, type: "main", index: 1 }]] },
+            [youtubePairName]: { main: [[{ node: youtubeClaimGateName, type: "main", index: 0 }]] },
+            [youtubeClaimGateName]: { main: [[
+              { node: "Upload YouTube Short", type: "main", index: 0 },
+              { node: youtubeResultPairName, type: "main", index: 0 },
+            ]] },
+            [youtubeResultPairName]: { main: [[{ node: youtubeCompleteName, type: "main", index: 0 }]] },
+            "Upload YouTube Short": { main: [[{ node: youtubeResultPairName, type: "main", index: 1 }]] },
             ...(isClipPublishingPipeline ? {
             "Only upload to Instagram when opted in": { main: [[
+              { node: instagramClaimName, type: "main", index: 0 },
+              { node: instagramClaimPairName, type: "main", index: 0 },
+            ]] },
+            [instagramClaimName]: { main: [[{ node: instagramClaimPairName, type: "main", index: 1 }]] },
+            [instagramClaimPairName]: { main: [[{ node: instagramClaimGateName, type: "main", index: 0 }]] },
+            [instagramClaimGateName]: { main: [[
               { node: "Create Instagram Reel upload session", type: "main", index: 0 },
               { node: "Pair Reel session with clip file", type: "main", index: 0 },
             ]] },
             "Create Instagram Reel upload session": { main: [[{ node: "Pair Reel session with clip file", type: "main", index: 1 }]] },
-            "Pair Reel session with clip file": { main: [[{ node: "Measure Reel upload bytes", type: "main", index: 0 }]] },
+            "Pair Reel session with clip file": { main: [[
+              { node: "Measure Reel upload bytes", type: "main", index: 0 },
+              { node: instagramResultPairName, type: "main", index: 0 },
+            ]] },
             "Measure Reel upload bytes": { main: [[{ node: "Upload Reel video bytes to Meta", type: "main", index: 0 }]] },
             "Upload Reel video bytes to Meta": { main: [[{ node: "Publish Instagram Reel", type: "main", index: 0 }]] },
+            "Publish Instagram Reel": { main: [[{ node: instagramResultName, type: "main", index: 0 }]] },
+            [instagramResultName]: { main: [[{ node: instagramResultPairName, type: "main", index: 1 }]] },
+            [instagramResultPairName]: { main: [[{ node: instagramCompleteName, type: "main", index: 0 }]] },
             } : {}),
           },
           active: false,
