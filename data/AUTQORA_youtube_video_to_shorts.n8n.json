@@ -1,0 +1,118 @@
+{
+  "name": "AUTQORA YouTube video to shorts - Clip",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "c8fad356-c105-432d-a97c-cefd87e18342",
+      "name": "Start clip generation",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Use a public archived video you own or are authorized to process. Live capture is not supported by this starter.\nreturn [{ json: { sourceUrl: \"REPLACE_WITH_PUBLIC_YOUTUBE_VIDEO_URL\", clipCount: 5, clipDurationSeconds: 18 } }];"
+      },
+      "id": "09dcbdc8-0868-407d-9dd2-93ba737c196b",
+      "name": "Set clip options",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8090/clips",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { sourceUrl: $json.sourceUrl, clipCount: $json.clipCount, clipDurationSeconds: $json.clipDurationSeconds } }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "cfb593d9-2908-489a-bc24-46e68b57c00c",
+      "name": "Create vertical clips with FFmpeg",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CLIP_WORKER_CREDENTIAL_ID",
+          "name": "AUTQORA Clip Worker"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const response = $input.first().json;\nif (!Array.isArray(response.clips) || response.clips.length === 0) throw new Error(\"Clip worker returned no clips.\");\nreturn response.clips.map((clip) => ({ json: { fileName: clip.fileName, durationSeconds: clip.durationSeconds, downloadUrl: clip.downloadUrl } }));"
+      },
+      "id": "77d4c389-bc92-4038-9341-381656072549",
+      "name": "Return clip download links",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Start clip generation": {
+      "main": [
+        [
+          {
+            "node": "Set clip options",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set clip options": {
+      "main": [
+        [
+          {
+            "node": "Create vertical clips with FFmpeg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create vertical clips with FFmpeg": {
+      "main": [
+        [
+          {
+            "node": "Return clip download links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "versionId": "df1a82df-cf4a-40f4-acb4-f447e784927a",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 140" width="560" height="140">
+  <defs>
+    <linearGradient id="aql" x1="18" y1="10" x2="102" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E7E0FF"/>
+      <stop offset="0.42" stop-color="#A48CFF"/>
+      <stop offset="1" stop-color="#5B32EE"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(22,8) scale(0.9)">
+    <path d="M60 12 L106 108 L88 108 L60 54 L32 108 L14 108 Z" fill="url(#aql)"/>
+    <path d="M34 72 L84 72 L82 84 L31 84 Z" fill="url(#aql)"/>
+    <path d="M82 78 C92 82 100 93 104 107" stroke="url(#aql)" stroke-width="9" stroke-linecap="round" fill="none"/>
+  </g>
+  <text x="152" y="76" font-family="Sora, Inter, Arial, sans-serif" font-size="42" font-weight="600" letter-spacing="9" fill="#F4F1FB">AUTQORA</text>
+  <text x="154" y="100" font-family="JetBrains Mono, ui-monospace, monospace" font-size="7.5" letter-spacing="3.4" fill="#9A93AA">AUTOMATION. ORCHESTRATED.</text>
+</svg>

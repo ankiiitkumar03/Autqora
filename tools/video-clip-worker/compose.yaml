@@ -1,0 +1,15 @@
+services:
+  autqora-video-clip-worker:
+    build: .
+    container_name: autqora-video-clip-worker
+    restart: unless-stopped
+    environment:
+      CLIP_WORKER_API_KEY: ${CLIP_WORKER_API_KEY:?Set CLIP_WORKER_API_KEY in .env}
+      PUBLIC_BASE_URL: http://localhost:8090
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - autqora_clips:/app/clips
+
+volumes:
+  autqora_clips:

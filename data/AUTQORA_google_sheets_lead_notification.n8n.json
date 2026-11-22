@@ -1,0 +1,178 @@
+{
+  "name": "AUTQORA \u2014 Google Sheets lead email notification",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "event": "rowAdded",
+        "options": {},
+        "authentication": "triggerOAuth2"
+      },
+      "id": "b0bdb3b5-62d8-49e7-8183-ee47e29fbf2b",
+      "name": "New lead in Google Sheet",
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "credentials": {
+        "googleSheetsTriggerOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const emailPattern = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nreturn $input.all().map((item) => {\n  const row = item.json;\n  const email = String(row.email ?? row.Email ?? '').trim();\n  const name = String(row.name ?? row.Name ?? 'New lead').trim();\n  const company = String(row.company ?? row.Company ?? '').trim();\n  const source = String(row.source ?? row.Source ?? '').trim();\n  const details = [name, email, company && `Company: ${company}`, source && `Source: ${source}`].filter(Boolean).join('\\n');\n  return { json: { ...row, leadEmail: email, leadName: name, isValid: emailPattern.test(email), notificationSubject: `New lead: ${name}`, notificationBody: `A new lead was added to Google Sheets.\\n\\n${details}` } };\n});"
+      },
+      "id": "4ec7197b-a3b3-45cd-91d3-ab930e01f0f8",
+      "name": "Validate lead email and format notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "38d6e8f3-7d90-464d-98b6-f8c1a0049821",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "2ca43db6-a4c8-4ada-9542-717c9212105b",
+      "name": "Email valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_WITH_NOTIFICATION_EMAIL",
+        "subject": "={{ $json.notificationSubject }}",
+        "emailType": "text",
+        "message": "={{ $json.notificationBody }}",
+        "options": {},
+        "resource": "message",
+        "operation": "send"
+      },
+      "id": "8aabba0e-dfb0-4bea-8fc5-5806fb70f092",
+      "name": "Send lead notification email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1060,
+        200
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "0e49fbe2-3548-4e91-a1ec-11cc5d8d5aee",
+      "name": "Skip invalid or missing email",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "New lead in Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Validate lead email and format notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate lead email and format notification": {
+      "main": [
+        [
+          {
+            "node": "Email valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email valid?": {
+      "main": [
+        [
+          {
+            "node": "Send lead notification email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip invalid or missing email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "versionId": "3ed774f9-6e3a-4d7c-b4c4-f9221bb94ed3",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
