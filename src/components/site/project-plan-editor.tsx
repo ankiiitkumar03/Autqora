@@ -8,6 +8,7 @@ import { ProjectDebugger } from "@/components/site/project-debugger";
 import { ToolRecommendationPanel } from "@/components/site/tool-recommendation-panel";
 import { ProjectRequirementsEditor } from "@/components/site/project-requirements-editor";
 import { WorkflowPreview } from "@/components/site/workflow-preview";
+import { ProjectActivityTimeline } from "@/components/site/project-activity-timeline";
 import { getProjectScenario } from "@/lib/project-scenario";
 
 type ResponseData = { project?: Project; plan?: ProjectPlan; freshness?: ProjectPlanFreshness; openQuestions?: string[]; error?: string };
@@ -496,6 +497,7 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
         </div>
       </div>
       <WorkflowPreview project={project} />
+      <ProjectActivityTimeline projectId={projectId} />
       <ProjectRequirementsEditor projectId={projectId} initialRequirements={project.requirements} onSaved={() => void refreshPlanFreshness()} />
       {openQuestions.length > 0 && <section aria-labelledby="open-requirements-title" className="mt-5 rounded-xl border border-amber-200/15 bg-amber-100/[0.035] p-4"><h2 id="open-requirements-title" className="text-sm font-medium text-amber-50/90">Questions to answer before building</h2><p className="mt-1 text-xs leading-relaxed text-white/50">These are missing details from the saved brief, not assumptions AUTQORA has filled in.</p><ul className="mt-3 list-disc space-y-1.5 pl-4 text-xs leading-relaxed text-white/70">{openQuestions.map((question) => <li key={question}>{question}</li>)}</ul></section>}
       {isWebhookIntake && webhookSecretStatus && (

@@ -616,6 +616,20 @@ export function getProjectSetup(workspaceId: string, projectId: string): Project
   return { ...emptyProjectSetup, ...(JSON.parse(row.checks_json) as Partial<ProjectSetup>) };
 }
 
+export function getProjectSetupUpdatedAt(workspaceId: string, projectId: string) {
+  const db = database();
+  const row = db.prepare("SELECT updated_at FROM project_setup WHERE workspace_id = ? AND project_id = ?")
+    .get(workspaceId, projectId) as { updated_at: string } | undefined;
+  if (!row) return null;
+  const context = db.prepare("SELECT artifact_id FROM project_setup_artifact_context WHERE workspace_id = ? AND project_id = ?")
+    .get(workspaceId, projectId) as { artifact_id: string | null } | undefined;
+  const latestArtifact = db.prepare("SELECT id FROM project_workflow_artifacts WHERE workspace_id = ? AND project_id = ? ORDER BY version DESC LIMIT 1")
+    .get(workspaceId, projectId) as { id: string } | undefined;
+  if (latestArtifact && context?.artifact_id !== latestArtifact.id) return null;
+  if (!latestArtifact && context?.artifact_id) return null;
+  return row.updated_at;
+}
+
 export function saveProjectSetup(workspaceId: string, projectId: string, checks: ProjectSetup) {
   const db = database();
   db.exec("BEGIN IMMEDIATE");
