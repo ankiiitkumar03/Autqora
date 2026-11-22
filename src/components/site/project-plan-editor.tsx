@@ -567,7 +567,7 @@ export function ProjectPlanEditor({ projectId }: { projectId: string }) {
           </button>
         </div>
       </div>
-      <WorkflowPreview project={project} />
+      <WorkflowPreview project={project} artifact={workflowVersions[0]} />
       {projectWorkflowKind === "generic_scaffold" && <section aria-labelledby="ai-workflow-title" className="mt-5 rounded-2xl border border-violet-soft/20 bg-violet-soft/[0.035] p-5 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div><p className="font-mono-brand text-[10px] uppercase tracking-[0.16em] text-violet-soft">Optional AI draft</p><h2 id="ai-workflow-title" className="mt-2 text-base font-medium text-white">Draft a tailored n8n workflow</h2><p className="mt-1 max-w-2xl text-xs leading-relaxed text-white/55">Uses the saved project brief, requirements, and latest saved plan. AUTQORA redacts common secret patterns and withholds the destination URL. AI is called only when you click; generated JSON is not saved until you choose to save it.</p></div>

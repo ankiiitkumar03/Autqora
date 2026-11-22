@@ -1,5 +1,7 @@
-import { ArrowRight, CircleDashed, Wrench } from "lucide-react";
+import { ArrowRight, CircleDashed, LoaderCircle, Wrench } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { Project } from "@/lib/project-domain";
+import type { WorkflowArtifact } from "@/lib/project-domain";
 import { getProjectScenario } from "@/lib/project-scenario";
 
 type StageState = "included" | "setup" | "pending" | "scaffold";
@@ -126,8 +128,118 @@ function getPreview(project: Project): { title: string; description: string; row
   };
 }
 
-export function WorkflowPreview({ project }: { project: Project }) {
+type DiagramNode = { name: string; type: string; position?: [number, number] };
+type DiagramEdge = { source: string; target: string; output: number };
+
+function parseWorkflowDiagram(value: Record<string, unknown>): { nodes: DiagramNode[]; edges: DiagramEdge[] } {
+  const rawNodes = Array.isArray(value.nodes) ? value.nodes : [];
+  const nodes = rawNodes.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const node = item as Record<string, unknown>;
+    if (typeof node.name !== "string" || typeof node.type !== "string") return [];
+    const rawPosition = node.position;
+    const position = Array.isArray(rawPosition) && rawPosition.length >= 2 && rawPosition.every(Number.isFinite)
+      ? [Number(rawPosition[0]), Number(rawPosition[1])] as [number, number]
+      : undefined;
+    return [{ name: node.name, type: node.type, position }];
+  });
+  const knownNames = new Set(nodes.map((node) => node.name));
+  const edges: DiagramEdge[] = [];
+  const connections = value.connections;
+  if (connections && typeof connections === "object") {
+    for (const [source, rawOutputs] of Object.entries(connections)) {
+      if (!knownNames.has(source) || !rawOutputs || typeof rawOutputs !== "object") continue;
+      const main = (rawOutputs as Record<string, unknown>).main;
+      if (!Array.isArray(main)) continue;
+      main.forEach((rawPort, output) => {
+        if (!Array.isArray(rawPort)) return;
+        for (const rawEdge of rawPort) {
+          if (!rawEdge || typeof rawEdge !== "object") continue;
+          const target = (rawEdge as Record<string, unknown>).node;
+          if (typeof target === "string" && knownNames.has(target)) edges.push({ source, target, output });
+        }
+      });
+    }
+  }
+  return { nodes, edges };
+}
+
+function SavedWorkflowDiagram({ artifact, workflow }: { artifact: WorkflowArtifact; workflow: Record<string, unknown> }) {
+  const { nodes: allNodes, edges: allEdges } = parseWorkflowDiagram(workflow);
+  const nodes = allNodes.slice(0, 40);
+  const visible = new Set(nodes.map((node) => node.name));
+  const edges = allEdges.filter((edge) => visible.has(edge.source) && visible.has(edge.target));
+  const xs = nodes.map((node, index) => node.position?.[0] ?? index * 280);
+  const ys = nodes.map((node) => node.position?.[1] ?? 0);
+  const minX = Math.min(0, ...xs);
+  const minY = Math.min(0, ...ys);
+  const positions = new Map(nodes.map((node, index) => [node.name, {
+    x: 24 + ((node.position?.[0] ?? index * 280) - minX) * 0.55,
+    y: 32 + ((node.position?.[1] ?? 0) - minY) * 0.55,
+  }]));
+  const width = Math.max(620, ...[...positions.values()].map(({ x }) => x + 190));
+  const height = Math.max(160, ...[...positions.values()].map(({ y }) => y + 112));
+  return (
+    <section aria-label={`Saved n8n workflow version ${artifact.version} diagram`} className="mt-5 rounded-2xl border border-violet-soft/15 bg-[#0a0810] p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="font-mono-brand text-[10px] uppercase tracking-[0.16em] text-violet-soft">Saved workflow · v{artifact.version}</p><h2 className="mt-1 font-display text-xl text-mist">{artifact.name}</h2><p className="mt-1 text-xs text-white/50">Diagram uses the saved n8n node positions and connections. It does not indicate that the workflow has run.</p></div>
+        <a href={`/api/projects/${artifact.projectId}/workflow/versions/${artifact.id}`} className="rounded-full border border-white/[0.14] px-3 py-2 text-xs text-white/75 hover:bg-white/[0.06]">Download JSON</a>
+      </div>
+      {nodes.length === 0 ? <p role="status" className="mt-5 rounded-lg border border-amber-100/15 bg-amber-100/[0.04] p-3 text-xs text-amber-100/80">This saved version has no renderable n8n nodes. Download its JSON to inspect the artifact.</p> : <>
+        <div className="mt-5 overflow-auto rounded-xl border border-white/[0.08] bg-[#08070b]" aria-label="Scrollable workflow diagram">
+          <div className="relative" style={{ width, height, minWidth: "100%" }}>
+            <svg aria-hidden="true" className="absolute inset-0" width={width} height={height}>
+              <defs><marker id="workflow-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#a78bfa" /></marker></defs>
+              {edges.map((edge, index) => {
+                const from = positions.get(edge.source); const to = positions.get(edge.target);
+                if (!from || !to) return null;
+                const startX = from.x + 164; const startY = from.y + 42;
+                const endX = to.x; const endY = to.y + 42;
+                const bend = Math.max(30, Math.abs(endX - startX) * 0.42);
+                return <path key={`${edge.source}-${edge.target}-${edge.output}-${index}`} d={`M ${startX} ${startY} C ${startX + bend} ${startY}, ${endX - bend} ${endY}, ${endX} ${endY}`} fill="none" stroke="#8b72d5" strokeOpacity="0.72" strokeWidth="2" markerEnd="url(#workflow-arrow)" />;
+              })}
+            </svg>
+            {nodes.map((node, index) => {
+              const point = positions.get(node.name)!;
+              return <article key={`${node.name}-${index}`} className="absolute flex h-[84px] w-[164px] flex-col justify-center rounded-xl border border-violet-soft/25 bg-[#15111d] px-3 shadow-lg shadow-black/20" style={{ left: point.x, top: point.y }} title={node.type}>
+                <span className="font-mono-brand text-[9px] uppercase tracking-wider text-violet-soft/80">{node.type.split(".").at(-1)}</span>
+                <h3 className="mt-1 line-clamp-2 text-xs font-medium leading-snug text-white/90">{node.name}</h3>
+              </article>;
+            })}
+          </div>
+        </div>
+        <p className="mt-3 text-[10px] text-white/40">{nodes.length} node{nodes.length === 1 ? "" : "s"} · {edges.length} connection{edges.length === 1 ? "" : "s"}{allNodes.length > nodes.length ? ` · showing first ${nodes.length} of ${allNodes.length}` : ""}</p>
+      </>}
+    </section>
+  );
+}
+
+export function WorkflowPreview({ project, artifact }: { project: Project; artifact?: WorkflowArtifact }) {
+  const [savedWorkflow, setSavedWorkflow] = useState<Record<string, unknown> | null>(null);
+  const [workflowLoadError, setWorkflowLoadError] = useState("");
   const preview = getPreview(project);
+
+  useEffect(() => {
+    if (!artifact) { setSavedWorkflow(null); setWorkflowLoadError(""); return; }
+    const controller = new AbortController();
+    setSavedWorkflow(null);
+    setWorkflowLoadError("");
+    void fetch(`/api/projects/${artifact.projectId}/workflow/versions/${artifact.id}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const result: unknown = await response.json();
+        if (!response.ok || !result || typeof result !== "object" || !Array.isArray((result as Record<string, unknown>).nodes)) throw new Error("Could not load the saved workflow JSON.");
+        setSavedWorkflow(result as Record<string, unknown>);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setWorkflowLoadError(error instanceof Error ? error.message : "Could not load the saved workflow JSON.");
+      });
+    return () => controller.abort();
+  }, [artifact?.id, artifact?.projectId]);
+
+  if (artifact && savedWorkflow) return <SavedWorkflowDiagram artifact={artifact} workflow={savedWorkflow} />;
+  if (artifact) return <section aria-label="Saved workflow preview" className="mt-5 rounded-2xl border border-violet-soft/15 bg-[#0a0810] p-5 sm:p-6"><p className="font-mono-brand text-[10px] uppercase tracking-[0.16em] text-violet-soft">Saved workflow · v{artifact.version}</p><p role={workflowLoadError ? "alert" : "status"} className="mt-3 flex items-center gap-2 text-xs text-white/55">{!workflowLoadError && <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />}{workflowLoadError || "Loading the saved workflow diagram…"}</p><a className="mt-3 inline-block text-xs text-violet-soft underline underline-offset-2" href={`/api/projects/${artifact.projectId}/workflow/versions/${artifact.id}`}>Download JSON</a></section>;
+
   return (
     <section aria-labelledby="workflow-preview-title" className="mt-5 rounded-2xl border border-violet-soft/15 bg-[#0a0810] p-5 sm:p-6">
       <div className="flex items-start gap-3">
