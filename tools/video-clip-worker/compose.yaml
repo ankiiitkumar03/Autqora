@@ -6,6 +6,7 @@ services:
     environment:
       CLIP_WORKER_API_KEY: ${CLIP_WORKER_API_KEY:?Set CLIP_WORKER_API_KEY in .env}
       PUBLIC_BASE_URL: http://localhost:8090
+      CLIP_RETENTION_SECONDS: ${CLIP_RETENTION_SECONDS:-604800}
     ports:
       - "127.0.0.1:8090:8090"
     volumes:

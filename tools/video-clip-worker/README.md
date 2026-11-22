@@ -13,7 +13,7 @@ This local service downloads an archived, public YouTube video that you own or a
 
 The n8n container reaches this Windows host through `host.docker.internal`. If that address is unavailable in your n8n container, it must be attached to a Docker network that can reach the host service. Keep the worker port local and never expose it to the public internet.
 
-The source video must be public and available to yt-dlp without sign-in. The service refuses playlists and non-YouTube hosts, limits source duration to four hours, and requires the API key. Do not use it to bypass access controls or process content without permission. Generated clips remain in the Docker volume `autqora_clips` until you remove them.
+The source video must be public and available to yt-dlp without sign-in. The service refuses playlists and non-YouTube hosts, limits source duration to four hours, and requires the API key. Do not use it to bypass access controls or process content without permission. Only one video job runs at a time to avoid competing downloads and FFmpeg processes on a local machine. Older clip folders are removed before the next authenticated job starts. The default retention is seven days; set `CLIP_RETENTION_SECONDS` in `.env` to a value from 3600 (one hour) through 2592000 (30 days). Expired folders are cleaned when the next job starts, so an idle worker may keep expired files until then. `docker compose down -v` removes the entire clip volume.
 
 ## Stop and remove generated clips
 

@@ -1,8 +1,11 @@
 import hmac
 import os
 import re
+import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -19,6 +22,10 @@ CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 API_KEY = os.environ.get("CLIP_WORKER_API_KEY", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8090").rstrip("/")
 MAX_SOURCE_SECONDS = 4 * 60 * 60
+CLIP_RETENTION_SECONDS = int(os.environ.get("CLIP_RETENTION_SECONDS", str(7 * 24 * 60 * 60)))
+if not 60 * 60 <= CLIP_RETENTION_SECONDS <= 30 * 24 * 60 * 60:
+    raise RuntimeError("CLIP_RETENTION_SECONDS must be between 3600 (1 hour) and 2592000 (30 days).")
+CLIP_JOB_LOCK = threading.Lock()
 
 app = FastAPI(title="AUTQORA YouTube clip worker", version="0.1.0")
 
@@ -61,6 +68,18 @@ def run_command(arguments: list[str]) -> str:
         raise HTTPException(status_code=422, detail="Could not inspect the downloaded video.") from exc
 
 
+def remove_expired_clip_jobs(now: float | None = None) -> None:
+    cutoff = (time.time() if now is None else now) - CLIP_RETENTION_SECONDS
+    for job_dir in CLIPS_DIR.iterdir():
+        if job_dir.is_symlink() or not job_dir.is_dir() or not re.fullmatch(r"[a-f0-9]{32}", job_dir.name):
+            continue
+        try:
+            if job_dir.stat().st_mtime < cutoff:
+                shutil.rmtree(job_dir, ignore_errors=True)
+        except OSError:
+            continue
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "ffmpeg": bool(subprocess.run(["ffmpeg", "-version"], capture_output=True).returncode == 0)}
@@ -69,6 +88,16 @@ def health():
 @app.post("/clips")
 def create_clips(payload: ClipRequest, authorization: str | None = Header(default=None)):
     require_api_key(authorization)
+    if not CLIP_JOB_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="A clip job is already running. Wait for it to finish before starting another.", headers={"Retry-After": "60"})
+    try:
+        remove_expired_clip_jobs()
+        return create_clip_job(payload)
+    finally:
+        CLIP_JOB_LOCK.release()
+
+
+def create_clip_job(payload: ClipRequest):
     source_url = validate_youtube_url(payload.sourceUrl)
     job_dir = CLIPS_DIR / uuid4().hex
     job_dir.mkdir(parents=True, exist_ok=False)

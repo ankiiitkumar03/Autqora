@@ -12,7 +12,7 @@ export function identifyOpenProjectQuestions(project: Project) {
     questions.push("How should it choose 15–20 second clips: fixed intervals, speech/highlight detection, or your manual selection?");
     questions.push("Should every candidate publish automatically, or should you review and approve each clip first?");
     questions.push("What title/caption rules, posting schedule, and initial privacy setting should each platform use?");
-    questions.push("The current export only makes local clips. Which Instagram professional account and YouTube channel will you connect in n8n Credentials?");
+    questions.push("The export includes opt-in YouTube and Instagram publisher branches. Which test accounts can you connect through n8n Credentials when you are ready to import-test them?");
     return questions;
   }
   if (scenario.isYoutubeVideoClips) {

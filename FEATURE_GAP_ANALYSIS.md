@@ -24,7 +24,7 @@ The webhook-to-API brief now captures a destination URL, HTTP method (POST/PUT/P
 
 | Interaction | Status | Finding |
 |---|---|---|
-| Project workflow preview | **Partially working** | `src/components/site/workflow-preview.tsx` renders a scenario-specific node-and-arrow diagram at the top of each implementation plan. It separates current export stages, setup requirements, pending stages, and generic scaffolds; it is a visual blueprint and does not imply execution evidence. |
+| Project workflow preview | **Partially working** | `src/components/site/workflow-preview.tsx` renders the latest saved workflow version from its actual n8n node names, positions, and connections. Before any version is saved, it falls back to a scenario-specific blueprint showing current export stages, setup requirements, pending stages, or generic scaffolds. Neither view implies execution evidence. |
 | Desktop/mobile nav | **Partially working** | `src/components/site/nav.tsx:18-40,84-123` implements menu/scrolled state. It only navigates to static pages and anchors. |
 | “Try debugging helper” | **Partially working** | `src/components/site/hero.tsx:67-71` and `src/components/site/final-cta.tsx:34-40` link to `/debug`; the client/API source path exists, but audit did not runtime-test it. |
 | Monthly/annual pricing toggle | **Working as local presentation** | `src/components/site/pricing.tsx:58-90` updates displayed hardcoded prices. It is not billing. |

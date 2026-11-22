@@ -93,7 +93,7 @@ export function buildDeploymentRunbook(
         scenario.isClipPublishingPipeline
           ? "- This is a partial implementation for the requested live-stream-to-Instagram/YouTube pipeline. It clips authorized archived YouTube videos and includes opt-in YouTube-private and Instagram Reels publisher branches. Both require n8n credentials and have not been runtime-tested. It does not capture live streams, select meaningful moments, or pause for per-clip approval. Keep both publish switches off until a clip run is reviewed."
           : "- This implementation accepts public archived YouTube videos available without sign-in, and only content you own or are authorized to process. It can optionally upload clips privately to YouTube after OAuth is configured. It does not capture an active live stream.",
-        "- Generated MP4 clips stay in the autqora_clips Docker volume until removed. Set an owner and retention period before regular use.",
+        "- The worker runs one video job at a time and cleans clip folders older than seven days before the next authenticated job by default. Set CLIP_RETENTION_SECONDS to 3600–2592000 in the worker .env to choose a 1-hour to 30-day retention period. Expired files may remain until another job starts; docker compose down -v removes all clips.",
         "- Keep port 8090 local; do not expose the worker publicly. Review the video source and clip links before sharing output.",
       ] : scenario.isInstagramPost ? [
         "- For the Instagram photo-post template, Meta requires an eligible professional account, publishing permission, and media publicly fetchable at publish time. Test publication can create a real post.",
