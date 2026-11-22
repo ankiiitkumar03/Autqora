@@ -226,8 +226,23 @@ export function WorkflowPreview({ project, artifact }: { project: Project; artif
     setWorkflowLoadError("");
     void fetch(`/api/projects/${artifact.projectId}/workflow/versions/${artifact.id}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
-        const result: unknown = await response.json();
-        if (!response.ok || !result || typeof result !== "object" || !Array.isArray((result as Record<string, unknown>).nodes)) throw new Error("Could not load the saved workflow JSON.");
+        const body = await response.text();
+        let result: unknown;
+        try {
+          result = JSON.parse(body);
+        } catch {
+          const contentType = response.headers.get("content-type") ?? "unknown content type";
+          throw new Error(`The workflow API returned ${contentType} instead of JSON (HTTP ${response.status}). Refresh the project and confirm it is open on the same AUTQORA server.`);
+        }
+        if (!response.ok) {
+          const message = result && typeof result === "object" && typeof (result as Record<string, unknown>).error === "string"
+            ? (result as Record<string, string>).error
+            : `The workflow API request failed (HTTP ${response.status}).`;
+          throw new Error(message);
+        }
+        if (!result || typeof result !== "object" || !Array.isArray((result as Record<string, unknown>).nodes)) {
+          throw new Error("The saved workflow response is missing its n8n nodes. Download its JSON to inspect the artifact.");
+        }
         setSavedWorkflow(result as Record<string, unknown>);
       })
       .catch((error: unknown) => {
