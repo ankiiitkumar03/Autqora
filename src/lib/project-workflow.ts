@@ -113,10 +113,18 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
       checks: [{ id: "structure", label: "Workflow JSON structure", passed: false, detail: structureErrors.join(" ") }],
     };
   }
-  const workflow = value as { active?: unknown; nodes?: N8nNode[] };
+  const workflow = value as { active?: unknown; nodes?: N8nNode[]; connections?: unknown };
   const nodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
   const names = nodes.map((node) => typeof node?.name === "string" ? node.name : "");
   const serialized = JSON.stringify(value);
+  const hasConnection = (source: string, target: string, outputIndex = 0) => {
+    if (!workflow.connections || typeof workflow.connections !== "object" || Array.isArray(workflow.connections)) return false;
+    const sourceConnections = (workflow.connections as Record<string, unknown>)[source];
+    if (!sourceConnections || typeof sourceConnections !== "object" || Array.isArray(sourceConnections)) return false;
+    const main = (sourceConnections as Record<string, unknown>).main;
+    if (!Array.isArray(main) || !Array.isArray(main[outputIndex])) return false;
+    return main[outputIndex].some((edge) => Boolean(edge && typeof edge === "object" && !Array.isArray(edge) && (edge as Record<string, unknown>).node === target));
+  };
   const hasPlaceholders = /REPLACE_WITH|YOUR_[A-Z0-9_]+|<[^>]+>/i.test(serialized);
   const httpNodes = nodes.filter((node) => node.type === "n8n-nodes-base.httpRequest");
   const webhookNodes = nodes.filter((node) => node.type === "n8n-nodes-base.webhook");
@@ -151,6 +159,16 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
   const clipWorkerBody = clipWorker?.parameters && typeof clipWorker.parameters === "object"
     ? (clipWorker.parameters as Record<string, unknown>).jsonBody
     : null;
+  const clipOutputName = "Return clip download links";
+  const downloadGateName = "Only download clips when a platform is opted in";
+  const downloadName = "Download clip for publishing";
+  const youtubeGateName = "Only upload to YouTube when opted in";
+  const instagramGateName = "Only upload to Instagram when opted in";
+  const instagramSessionName = "Create Instagram Reel upload session";
+  const instagramMergeName = "Pair Reel session with clip file";
+  const instagramMeasureName = "Measure Reel upload bytes";
+  const instagramUploadName = "Upload Reel video bytes to Meta";
+  const instagramPublishName = "Publish Instagram Reel";
   const clipSelectionControlsPass = !isClipPublishingScenario || (
     typeof clipOptionsCode === "string"
     && /selectionMode\s*:\s*["']evenly_spaced["']/.test(clipOptionsCode)
@@ -168,6 +186,22 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
     && Boolean(youtubeUploadOptions && typeof youtubeUploadOptions === "object"
       && (youtubeUploadOptions as Record<string, unknown>).privacyStatus === "={{ $json.youtubePrivacyStatus }}"
       && (youtubeUploadOptions as Record<string, unknown>).description === "={{ $json.youtubeDescription }}")
+    && nodes.some((node) => node.name === downloadGateName && node.type === "n8n-nodes-base.code" && typeof (node.parameters as Record<string, unknown> | undefined)?.jsCode === "string" && /publishToYouTube\s*===\s*true/.test(String((node.parameters as Record<string, unknown>).jsCode)) && /publishToInstagram\s*===\s*true/.test(String((node.parameters as Record<string, unknown>).jsCode)))
+    && nodes.some((node) => node.name === youtubeGateName && node.type === "n8n-nodes-base.code" && /publishToYouTube\s*===\s*true/.test(String((node.parameters as Record<string, unknown> | undefined)?.jsCode)))
+    && hasConnection(clipOutputName, downloadGateName)
+    && hasConnection(downloadGateName, downloadName)
+    && hasConnection(downloadName, youtubeGateName)
+    && hasConnection(youtubeGateName, String(youtubeUpload?.name ?? ""))
+    && (scenario !== "youtube_clip_publishing_pipeline" || (
+      nodes.some((node) => node.name === instagramGateName && node.type === "n8n-nodes-base.code" && /publishToInstagram\s*===\s*true/.test(String((node.parameters as Record<string, unknown> | undefined)?.jsCode)))
+      && hasConnection(downloadName, instagramGateName)
+      && hasConnection(instagramGateName, instagramSessionName)
+      && hasConnection(instagramGateName, instagramMergeName)
+      && hasConnection(instagramSessionName, instagramMergeName)
+      && hasConnection(instagramMergeName, instagramMeasureName)
+      && hasConnection(instagramMeasureName, instagramUploadName)
+      && hasConnection(instagramUploadName, instagramPublishName)
+    ))
   );
   const structuralPass = structureErrors.length === 0;
   const placeholdersPass = !hasPlaceholders;
@@ -245,8 +279,8 @@ export function verifyN8nWorkflow(value: unknown, scenario = "generic_scaffold")
       label: "YouTube metadata and platform choices",
       passed: clipPublishingControlsPass,
       detail: clipPublishingControlsPass
-        ? "The clip options expose YouTube title, description, privacy (private/unlisted/public), and separate YouTube/Instagram opt-ins. This checks workflow configuration only; it does not verify provider behavior."
-        : "Regenerate this workflow to include editable YouTube title, description, privacy, and separate platform opt-in settings.",
+        ? "The clip options expose YouTube metadata and privacy, and publishing nodes are connected behind their matching platform opt-in filters. This checks workflow structure only; it does not verify provider behavior or execution."
+        : "The workflow is missing clip publishing settings or a required opt-in-gated publishing connection. Regenerate the workflow and review its platform branches.",
     }] : []),
     {
       id: "placeholders",
